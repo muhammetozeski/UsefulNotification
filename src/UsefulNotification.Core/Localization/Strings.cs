@@ -1,45 +1,116 @@
 namespace UsefulNotification.Localization;
-
-/// <summary>
-/// User-facing UI strings, Turkish by default. <see cref="LocManager"/> reflection-writes these
-/// fields to <c>lang.tr.xml</c> when it is missing, and loads matching XML entries when a language
-/// is selected. Keep each public string field mutable so the existing loader can update it.
-/// Add the same key and matching format placeholders to lang.en.xml for every new field.
-/// </summary>
-internal static class Strings
-{
-    private const bool IsLogEnabled = true;
-
-    // Application.
-    public static string AppTitle = "Örnek Uygulama";
-    public static string AppDescription = "Uygulama açıklaması";
-
-    // Language.
-    public static string SettingLanguage = "Dil";
-    public static string LanguageSystem = "Windows'u izle";
-
-    // Settings.
+/// <summary>Contains localized interface text loaded by LocManager.</summary>
+internal static class Strings {
+    public static string AppTitle = "UsefulNotification";
+    public static string PanelTitle = "Bildirimler";
+    public static string NewNotification = "Yeni bildirim alındı.";
+    public static string Inbox = "Bildirimler";
+    public static string Scheduled = "Zamanlanmış";
+    public static string Sounds = "Sesler";
     public static string SettingsTitle = "Ayarlar";
-    public static string SettingExampleText = "Örnek metin ayarı";
-    public static string SettingExampleNumber = "Örnek sayı ayarı";
-    public static string SettingExampleEnabled = "Örnek özellik açık";
+    public static string New = "Yeni";
+    public static string Send = "Gönder";
+    public static string Save = "Kaydet";
+    public static string Cancel = "Vazgeç";
+    public static string Close = "Kapat";
+    public static string Exit = "Çıkış";
+    public static string Dismiss = "Kapat";
+    public static string DismissAll = "Tümünü kapat";
+    public static string Snooze = "Ertele";
+    public static string Search = "Bildirimlerde ara";
+    public static string Empty = "Bildirim yok.";
+    public static string Title = "Başlık";
+    public static string Message = "Mesaj";
+    public static string Source = "Gönderen";
+    public static string Level = "Seviye";
+    public static string Kind = "Tür";
+    public static string Theme = "Tema";
+    public static string Language = "Dil";
+    public static string Sound = "Ses";
+    public static string PlaySound = "Bildirim sesi";
+    public static string Sticky = "Kapatılana kadar göster";
+    public static string Silent = "Sessiz";
+    public static string Duration = "Süre (saniye)";
+    public static string When = "Zaman";
+    public static string Recurrence = "Tekrar";
+    public static string QuickReminder = "Hızlı hatırlatma";
+    public static string ClearHistory = "Geçmişi temizle";
+    public static string Duplicate = "Çoğalt";
+    public static string Edit = "Düzenle";
+    public static string Reply = "Yanıtla";
+    public static string ReplyRequired = "Lütfen bir yanıt girin.";
+    public static string Confirm = "Onayla";
+    public static string Progress = "İlerleme";
+    public static string Image = "Görsel";
+    public static string Choice = "Seçim";
+    public static string Input = "Yanıt";
+    public static string Checklist = "Kontrol listesi";
+    public static string Custom = "Özel";
+    public static string Text = "Metin";
+    public static string Reminder = "Hatırlatma";
+    public static string All = "Tümü";
+    public static string Normal = "Normal";
+    public static string Info = "Bilgi";
+    public static string Success = "Başarılı";
+    public static string Warning = "Uyarı";
+    public static string Error = "Hata";
+    public static string Urgent = "Acil";
+    public static string Deadline = "Son tarih";
+    public static string Meeting = "Toplantı";
+    public static string Health = "Sağlık";
+    public static string Break = "Mola";
+    public static string Personal = "Kişisel";
+    public static string None = "Yok";
+    public static string Hourly = "Saatlik";
+    public static string Daily = "Günlük";
+    public static string Weekdays = "Hafta içi";
+    public static string Weekly = "Haftalık";
+    public static string Monthly = "Aylık";
+    public static string Yearly = "Yıllık";
+    public static string Interval = "Aralık";
+    public static string Pending = "Bekliyor";
+    public static string Visible = "Gösteriliyor";
+    public static string Snoozed = "Ertelendi";
+    public static string Dismissed = "Kapatıldı";
+    public static string Expired = "Süresi doldu";
+    public static string Failed = "Gösterim doğrulanamadı";
+    public static string MaximumVisible = "Aynı anda gösterilen bildirim";
+    public static string PauseOnHover = "Fare üzerindeyken süreyi durdur";
+    public static string GlobalHotkey = "Panel kısayolu: Ctrl+Alt+N";
+    public static string Monitor = "Monitör";
+    public static string Logging = "Günlük kaydı";
+    public static string OpenData = "Veri klasörünü aç";
+    public static string OpenThemes = "Tema klasörünü aç";
+    public static string OpenTemplates = "Şablon klasörünü aç";
+    public static string Reload = "Yeniden yükle";
+    public static string TestSound = "Sesi dene";
+    public static string AddTone = "Ton ekle";
+    public static string Frequency = "Frekans (Hz)";
+    public static string Milliseconds = "Süre (ms)";
+    public static string Pause = "Ara (ms)";
+    public static string Name = "Ad";
+    public static string Delete = "Sil";
+    public static string SoundFile = "Ses dosyası";
     public static string SettingsSaved = "Ayarlar kaydedildi.";
-
-    // Commands.
-    public static string ButtonSave = "Kaydet";
-    public static string ButtonCancel = "Vazgeç";
-    public static string ButtonRetry = "Yeniden dene";
-    public static string ButtonClose = "Kapat";
-    public static string ButtonOpenFolder = "Klasörü aç";
-
-    // Operation status.
-    public static string StatusReady = "Hazır";
-    public static string StatusWorking = "İşlem sürüyor.";
-    public static string StatusCompleted = "İşlem tamamlandı.";
-    public static string StatusCanceled = "İşlem iptal edildi.";
-    public static string StatusFailed = "İşlem tamamlanamadı.";
-    public static string ProgressItems = "{0} / {1} öğe işlendi.";
-
-    // User-editable text supports escaped newlines in the XML files.
-    public static string ExampleMultiline = "İlk satır\nİkinci satır";
+    public static string OperationFailed = "İşlem tamamlanamadı. Ayrıntılar günlük dosyasında.";
+    public static string Retry = "Yeniden göster";
+    public static string Sort = "Sırala";
+    public static string Newest = "En yeni";
+    public static string Oldest = "En eski";
+    public static string Priority = "Öncelik";
+    public static string NextDue = "Sonraki zaman";
+    public static string MinuteFormat = "{0} dakika";
+    public static string DateFormat = "{0}";
+    public static string ShowPanel = "Bildirim panelini aç";
+    public static string Background = "Arka planda çalışıyor";
+    public static string DeliveryFailed = "Bir bildirimin ekrana ulaştığı doğrulanamadı.";
+    public static string ImagePath = "Görsel yolu veya bağlantısı";
+    public static string InputPlaceholder = "Yanıtınız";
+    public static string Items = "Öğeler (her satıra bir tane)";
+    public static string ProgressValue = "İlerleme değeri";
+    public static string Template = "HTML şablonu";
+    public static string SoundName = "Ses adı";
+    public static string ToneSequence = "Ton dizisi";
+    public static string MoveUp = "Yukarı";
+    public static string MoveDown = "Aşağı";
 }

@@ -1,4 +1,4 @@
 <Project><PropertyGroup>
   <LangVersion>14</LangVersion><Nullable>enable</Nullable><ImplicitUsings>enable</ImplicitUsings>
-  <Version>1.0.0</Version><RuntimeFrameworkVersion>10.0.12</RuntimeFrameworkVersion><NuGetAudit>false</NuGetAudit>
+  <Version>1.0.0</Version><NuGetAudit>false</NuGetAudit>
 </PropertyGroup></Project>

@@ -114,7 +114,7 @@ public static class Logger
         try
         {
 
-            if (MessageObject is System.Collections.IEnumerable numerable)
+            if (MessageObject is System.Collections.IEnumerable numerable && MessageObject is not string)
             {
                 foreach (var item in numerable)
                 {

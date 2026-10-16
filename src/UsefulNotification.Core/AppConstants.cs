@@ -15,6 +15,7 @@ public static class AppConstants
     public static TransportOptions Transport = new();
     public static WindowOptions Windows = new();
     public static JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true, Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) } };
+    public static JsonSerializerOptions WireJson = new(Json) { WriteIndented = false };
     public static RetryStrategyOptions Retry = new()
     {
         MaxRetryAttempts = 2, Delay = TimeSpan.FromMilliseconds(120), BackoffType = DelayBackoffType.Exponential,

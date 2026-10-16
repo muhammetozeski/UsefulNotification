@@ -30,8 +30,14 @@ internal static class SettingsManagerSettings
 // Declare settings here. Field names become file keys automatically.
 internal static class Settings
 {
-    public static readonly Setting<string> Language = new("system");
+    public static readonly Setting<string> Language = new("en");
     public static readonly Setting<bool> EnableLogging = new(true);
+    public static Setting<string> Theme = new("Dark");
+    public static Setting<int> MaximumVisible = new(AppConstants.Notifications.MaximumVisible);
+    public static Setting<bool> PlaySound = new(true);
+    public static Setting<bool> PauseOnHover = new(true);
+    public static Setting<bool> GlobalHotkey = new(true);
+    public static Setting<int> Monitor = new(0);
 }
 
 internal interface ISetting
