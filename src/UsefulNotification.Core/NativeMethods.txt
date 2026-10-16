@@ -1,0 +1,5 @@
+Beep
+MessageBeep
+CreateToolhelp32Snapshot
+Process32First
+Process32Next

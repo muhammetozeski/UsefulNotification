@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+ <PropertyGroup><TargetFramework>net10.0</TargetFramework><OutputType>Exe</OutputType><AssemblyName>UsefulNotification.Command</AssemblyName><ApplicationIcon>../../Assets/app.ico</ApplicationIcon></PropertyGroup>
+ <ItemGroup><ProjectReference Include="../UsefulNotification.Core/UsefulNotification.Core.csproj" /></ItemGroup>
+</Project>
