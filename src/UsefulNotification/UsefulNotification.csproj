@@ -7,7 +7,7 @@
   <RuntimeIdentifier>win-x64</RuntimeIdentifier><SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion><TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
   <ApplicationTitle>UsefulNotification</ApplicationTitle><ApplicationId>com.muhammetozeski.usefulnotification</ApplicationId>
   <ApplicationDisplayVersion>1.0.0</ApplicationDisplayVersion><ApplicationVersion>1</ApplicationVersion>
-  <ApplicationIcon>../../Assets/app.ico</ApplicationIcon><AllowUnsafeBlocks>true</AllowUnsafeBlocks><PublishTrimmed>false</PublishTrimmed><EnableMsixTooling>false</EnableMsixTooling>
+  <ApplicationIcon>../../Assets/app.ico</ApplicationIcon><AllowUnsafeBlocks>true</AllowUnsafeBlocks><PublishTrimmed>false</PublishTrimmed><EnableMsixTooling>true</EnableMsixTooling>
  </PropertyGroup>
  <ItemGroup>
   <ProjectReference Include="../UsefulNotification.Core/UsefulNotification.Core.csproj" />
@@ -15,5 +15,6 @@
   <PackageReference Include="Microsoft.AspNetCore.Components.WebView.Maui" Version="10.0.20" />
   <PackageReference Include="H.NotifyIcon.Maui" Version="2.4.1" />
   <Content Include="../../Assets/app.ico" Link="app.ico" CopyToOutputDirectory="PreserveNewest" />
+  <EmbeddedResource Include="Templates/Card.html" LogicalName="UsefulNotification.Templates.Card.html" />
  </ItemGroup>
 </Project>

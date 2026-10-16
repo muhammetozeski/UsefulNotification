@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/UsefulNotification.Command/UsefulNotification.Command.csproj" />
+    <Project Path="src/UsefulNotification.Core/UsefulNotification.Core.csproj" />
+    <Project Path="src/UsefulNotification.Launcher/UsefulNotification.Launcher.csproj" />
+    <Project Path="src/UsefulNotification/UsefulNotification.csproj" />
+  </Folder>
+</Solution>

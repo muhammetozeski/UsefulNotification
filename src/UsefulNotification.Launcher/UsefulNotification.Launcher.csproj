@@ -1,3 +1,3 @@
 <Project Sdk="Microsoft.NET.Sdk">
- <PropertyGroup><TargetFramework>net10.0</TargetFramework><OutputType>WinExe</OutputType><AssemblyName>UsefulNotification</AssemblyName><ApplicationIcon>../../Assets/app.ico</ApplicationIcon><PublishSingleFile>true</PublishSingleFile><SelfContained>false</SelfContained></PropertyGroup>
+ <PropertyGroup><TargetFramework>net10.0</TargetFramework><OutputType>WinExe</OutputType><AssemblyName>UsefulNotification.Launcher</AssemblyName><ApplicationIcon>../../Assets/app.ico</ApplicationIcon><UseAppHost>false</UseAppHost><SelfContained>false</SelfContained><Product>UsefulNotification</Product></PropertyGroup>
 </Project>
