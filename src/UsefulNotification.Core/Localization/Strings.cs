@@ -1,6 +1,8 @@
 namespace UsefulNotification.Localization;
 /// <summary>Contains localized interface text loaded by LocManager.</summary>
 internal static class Strings {
+    public static string StartWithWindows = "Windows ile başlat";
+    public static string Manual = "Elle";
     public static string AppTitle = "UsefulNotification";
     public static string PanelTitle = "Bildirimler";
     public static string NewNotification = "Yeni bildirim alındı.";

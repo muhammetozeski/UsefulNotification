@@ -2,6 +2,7 @@ using System.IO.Pipes;
 using System.Net;
 using System.Text.Json;
 using UsefulNotification.Localization;
+using Windows.Win32;
 
 namespace UsefulNotification;
 
@@ -19,6 +20,7 @@ internal sealed class NotificationHub : IDisposable
     public event Action? Changed;
     public event Action? PanelRequested;
     public event Action? ShutdownRequested;
+    public event Action? SettingsReloaded;
     public event Action<NotificationEntry>? DeliveryIssue;
     public event Action<NotificationEntry>? SoundRequested;
     public Task? ServerTask { get; set; }
@@ -58,7 +60,10 @@ internal sealed class NotificationHub : IDisposable
         if (command.Operation == NotificationOperation.ReloadSettings)
         {
             SettingsManager.LoadSettings(AppConstants.ConfigFileName);
+            var language = ApplicationServices.ChangeLanguage(Settings.Language.Value, persist: false);
+            if (!language.Succeeded) throw language.Error ?? new InvalidDataException("The selected language could not be applied.");
             ThemeCatalog.Load();
+            SettingsReloaded?.Invoke();
             Changed?.Invoke();
             return new() { Accepted = true };
         }
@@ -269,6 +274,12 @@ internal sealed class NotificationHub : IDisposable
                     string payload = await reader.ReadLineAsync(budget.Token) ?? throw new InvalidDataException("Empty request.");
                     if (payload.Length > AppConstants.Transport.MaximumMessageCharacters) throw new InvalidDataException("The request exceeds the channel limit.");
                     command = JsonSerializer.Deserialize<NotificationCommand>(payload, AppConstants.Json) ?? throw new InvalidDataException("Invalid request.");
+                    if (command.Operation == NotificationOperation.Send && string.IsNullOrWhiteSpace(command.Notification?.Source) && OperatingSystem.IsWindowsVersionAtLeast(10)
+                        && PInvoke.GetNamedPipeClientProcessId(pipe.SafePipeHandle, out uint senderId))
+                    {
+                        using Process sender = Process.GetProcessById((int)senderId);
+                        command.Notification = (command.Notification ?? new()) with { Source = sender.ProcessName };
+                    }
                     response = Apply(command);
                 }
                 catch (Exception error) when (error is not OperationCanceledException)

@@ -1,4 +1,6 @@
 <strings>
+  <s name="StartWithWindows">Start with Windows</s>
+  <s name="Manual">Manual</s>
   <s name="AppTitle">UsefulNotification</s>
   <s name="PanelTitle">Notifications</s>
   <s name="NewNotification">A new notification was received.</s>

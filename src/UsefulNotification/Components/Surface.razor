@@ -43,6 +43,7 @@ else
                             <label class="check"><input type="checkbox" @bind="Settings.PlaySound.Value" />@Strings.PlaySound</label>
                             <label class="check"><input type="checkbox" @bind="Settings.PauseOnHover.Value" />@Strings.PauseOnHover</label>
                             <label class="check"><input type="checkbox" @bind="Settings.GlobalHotkey.Value" />@Strings.GlobalHotkey</label>
+                            <label class="check"><input type="checkbox" @bind="Settings.StartWithWindows.Value" />@Strings.StartWithWindows</label>
                             <label class="check"><input type="checkbox" @bind="Settings.EnableLogging.Value" />@Strings.Logging</label>
                         </div>
                         <div class="actions"><button class="primary" @onclick="SaveSettings">@Strings.Save</button><button @onclick="() => OpenDirectory(AppPaths.UserData)">@Strings.OpenData</button><button @onclick="() => OpenDirectory(Path.Combine(AppPaths.UserData, AppConstants.Storage.ThemesDirectory))">@Strings.OpenThemes</button><button @onclick="() => OpenDirectory(Path.Combine(AppPaths.UserData, AppConstants.Storage.TemplatesDirectory))">@Strings.OpenTemplates</button><button @onclick="Reload">@Strings.Reload</button><button @onclick="App.Host.Exit">@Strings.Exit</button></div>
@@ -105,7 +106,7 @@ else
         }
         Guid[] rendered = Active.Select(entry => entry.Id).ToArray();
         App.Host.SurfacePrepared(Toast, rendered);
-        App.Host.ConfirmRendered(rendered, Toast);
+        if (Toast) App.Host.ConfirmRendered(rendered, true);
     }
 
     /// <summary>Receives the actual card-stack height rather than guessing from message length.</summary>
@@ -117,14 +118,15 @@ else
         App.Host.ConfirmRendered(Active.Select(entry => entry.Id).ToArray(), true);
     }
 
-    /// <summary>Accepts only action identities already declared in that notification's contract.</summary>
+    /// <summary>Accepts a declared action or the reserved template dismissal action.</summary>
     /// <param name="id">The frame's notification identity.</param>
     /// <param name="action">The declared action identity.</param>
     /// <param name="reply">Optional template reply.</param>
     [JSInvokable] public void TemplateAction(string id, string action, string reply) => RunSafely(() =>
     {
         var entry = Entries.Single(item => item.Id == Guid.Parse(id));
-        App.Hub.Interact(entry.Id, entry.Request.Actions.Single(item => item.Id == action), reply);
+        if (action == AppConstants.HtmlTemplates.DismissAction) App.Hub.Interact(entry.Id);
+        else App.Hub.Interact(entry.Id, entry.Request.Actions.Single(item => item.Id == action), reply);
     });
 
     /// <summary>Refreshes this renderer on its own Blazor dispatcher.</summary>
@@ -159,7 +161,7 @@ else
         if (Settings.MaximumVisible.Value < 1 || Settings.Monitor.Value < 0) { Error = Strings.OperationFailed; return; }
         var result = ApplicationServices.SaveSettings();
         Error = result.Succeeded ? null : Strings.OperationFailed;
-        if (result.Succeeded) { App.Host.InstallHotkey(); App.Hub.Tick(); StateHasChanged(); }
+        if (result.Succeeded) { App.Hub.Apply(new() { Operation = NotificationOperation.ReloadSettings }); App.Hub.Tick(); StateHasChanged(); }
     }
 
     /// <summary>Applies and persists a language selection through the shared language boundary.</summary>

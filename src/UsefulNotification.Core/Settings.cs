@@ -37,6 +37,7 @@ internal static class Settings
     public static Setting<bool> PlaySound = new(true);
     public static Setting<bool> PauseOnHover = new(true);
     public static Setting<bool> GlobalHotkey = new(true);
+    public static Setting<bool> StartWithWindows = new(false);
     public static Setting<int> Monitor = new(0);
 }
 

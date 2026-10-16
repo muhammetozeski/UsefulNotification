@@ -12,6 +12,7 @@ using Windows.Win32.UI.Input.KeyboardAndMouse;
 using Windows.Win32.UI.WindowsAndMessaging;
 using MauiWindow = Microsoft.Maui.Controls.Window;
 using NativeWindow = Microsoft.UI.Xaml.Window;
+using Microsoft.Win32;
 
 namespace UsefulNotification.Desktop;
 
@@ -27,12 +28,13 @@ internal sealed class WindowHost
     IDispatcherTimer? Scheduler;
     readonly SemaphoreSlim SoundGate = new(1);
     bool Exiting;
-    bool PanelWanted = !Environment.GetCommandLineArgs().Contains("--background");
+    bool PanelWanted = !Environment.GetCommandLineArgs().Contains(AppConstants.Product.BackgroundArgument);
     bool ToastPrepared;
     bool PanelPrepared;
     HashSet<Guid> RenderedCards = [];
     int ToastHeight = AppConstants.Windows.Toast.Height;
     static NativeAppearance Chrome = new();
+    static StartupRegistration Startup = new();
     public double ToastContentScale => AppConstants.Windows.ToastSizing == DisplaySizing.PhysicalPixels && Toast is not null
         ? PInvoke.USER_DEFAULT_SCREEN_DPI / (double)PInvoke.GetDpiForWindow(Handle(Toast)) : 1;
 
@@ -41,6 +43,11 @@ internal sealed class WindowHost
     {
         public WINDOW_STYLE FrameStyles = WINDOW_STYLE.WS_CAPTION | WINDOW_STYLE.WS_BORDER | WINDOW_STYLE.WS_DLGFRAME | WINDOW_STYLE.WS_THICKFRAME | WINDOW_STYLE.WS_SYSMENU | WINDOW_STYLE.WS_MINIMIZEBOX | WINDOW_STYLE.WS_MAXIMIZEBOX;
         public WINDOW_EX_STYLE EdgeStyles = WINDOW_EX_STYLE.WS_EX_WINDOWEDGE | WINDOW_EX_STYLE.WS_EX_CLIENTEDGE | WINDOW_EX_STYLE.WS_EX_STATICEDGE | WINDOW_EX_STYLE.WS_EX_DLGMODALFRAME;
+    }
+    /// <summary>Names the current user's optional sign-in registration.</summary>
+    sealed class StartupRegistration
+    {
+        public string RegistryPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
     }
 
     /// <summary>Configures native chrome, starts the request listener, and creates the reusable toast window.</summary>
@@ -76,9 +83,11 @@ internal sealed class WindowHost
         };
         Tray.ForceCreate(false);
         InstallHotkey();
+        if (Settings.StartWithWindows.Value) ApplyStartup();
         App.Hub.Changed += () => MainThread.BeginInvokeOnMainThread(() => RunSafely(Refresh));
         App.Hub.PanelRequested += () => MainThread.BeginInvokeOnMainThread(() => ShowPanel());
         App.Hub.ShutdownRequested += () => MainThread.BeginInvokeOnMainThread(Exit);
+        App.Hub.SettingsReloaded += () => MainThread.BeginInvokeOnMainThread(() => RunSafely(() => { InstallHotkey(); ApplyStartup(); }));
         App.Hub.SoundRequested += entry => _ = PlaySoundAsync(entry.Request.Sound);
         App.Hub.DeliveryIssue += entry =>
         {
@@ -102,7 +111,7 @@ internal sealed class WindowHost
             Refresh();
         };
         Application.Current.OpenWindow(toast);
-        if (Environment.GetCommandLineArgs().Contains("--background")) Panel.AppWindow.Hide();
+        if (!PanelWanted) Panel.AppWindow.Hide();
     }
 
     /// <summary>Opens or hides the existing panel without stopping scheduling.</summary>
@@ -284,6 +293,23 @@ internal sealed class WindowHost
         PInvoke.UnregisterHotKey(handle, shortcut.Id);
         if (Settings.GlobalHotkey.Value && !PInvoke.RegisterHotKey(handle, shortcut.Id, HOT_KEY_MODIFIERS.MOD_CONTROL | HOT_KEY_MODIFIERS.MOD_ALT | HOT_KEY_MODIFIERS.MOD_NOREPEAT, (uint)VIRTUAL_KEY.VK_N))
             Log("Panel shortcut could not be registered; another application may own it.", PrintToConsole: false, isRun: IsLogEnabled);
+    }
+
+    /// <summary>Applies the user's explicit sign-in preference without requiring administrator rights.</summary>
+    public void ApplyStartup()
+    {
+        if (Settings.StartWithWindows.Value)
+        {
+            string launcher = Path.Combine(AppPaths.Root, AppConstants.Product.Executable);
+            if (!File.Exists(launcher)) launcher = Path.Combine(AppPaths.PayloadDirectory, AppConstants.Product.Executable);
+            using RegistryKey key = Registry.CurrentUser.CreateSubKey(Startup.RegistryPath);
+            key.SetValue(AppConstants.Product.Name, $"\"{launcher}\" {AppConstants.Product.BackgroundArgument}", RegistryValueKind.String);
+        }
+        else
+        {
+            using RegistryKey? key = Registry.CurrentUser.OpenSubKey(Startup.RegistryPath, writable: true);
+            key?.DeleteValue(AppConstants.Product.Name, throwOnMissingValue: false);
+        }
     }
 
     /// <summary>Finds the selected monitor's physical working rectangle.</summary>

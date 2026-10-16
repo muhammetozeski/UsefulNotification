@@ -76,8 +76,8 @@ internal static class CommandLine
                     case Field.Image: request.Kind = NotificationKind.Image; request.Image = value; break;
                     case Field.Template: request.Kind = NotificationKind.Custom; request.Template = value; break;
                     case Field.Input: request.Kind = NotificationKind.Input; request.Input = new(); request.Sticky = true; break;
-                    case Field.Items: request.Kind = NotificationKind.Checklist; request.Checklist = value.Split('|').Select(text => new ChecklistItem { Text = text }).ToList(); break;
-                    case Field.Actions: request.Kind = NotificationKind.Choice; request.Actions = value.Split('|').Select(label => new NotificationAction { Label = label }).ToList(); break;
+                    case Field.Items: request.Kind = NotificationKind.Checklist; request.Checklist = value.Split('|').Select(text => new ChecklistItem { Id = text, Text = text }).ToList(); break;
+                    case Field.Actions: request.Kind = NotificationKind.Choice; request.Actions = value.Split('|').Select(label => new NotificationAction { Id = label, Label = label }).ToList(); break;
                     case Field.Sound: request.Sound = new() { AudioFile = value }; break;
                     case Field.Json: request = JsonSerializer.Deserialize<NotificationRequest>(File.ReadAllText(value), AppConstants.Json) ?? new(); request.Source ??= SenderIdentity.Parent(); break;
                     case Field.Stdin: request = JsonSerializer.Deserialize<NotificationRequest>(await Console.In.ReadToEndAsync(), AppConstants.Json) ?? new(); request.Source ??= SenderIdentity.Parent(); break;

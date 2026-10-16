@@ -9,6 +9,9 @@ public static class MauiProgram
     public static MauiApp CreateMauiApp()
     {
         if (!ApplicationServices.Initialize().Succeeded) throw new InvalidOperationException("Portable settings or language initialization failed. See AppCache/Logs.");
+        string browserCache = Path.Combine(AppPaths.AppCache, AppConstants.Storage.BrowserCacheDirectory);
+        Directory.CreateDirectory(browserCache);
+        Environment.SetEnvironmentVariable(AppConstants.Storage.BrowserCacheEnvironmentVariable, browserCache, EnvironmentVariableTarget.Process);
         var builder = MauiApp.CreateBuilder().UseMauiApp<App>().UseNotifyIcon();
         builder.Services.AddMauiBlazorWebView();
 #if DEBUG

@@ -15,6 +15,7 @@ public static class AppConstants
     public static TransportOptions Transport = new();
     public static WindowOptions Windows = new();
     public static RenderMemoryOptions RenderMemory = new();
+    public static HtmlTemplateOptions HtmlTemplates = new();
     public static JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true, Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) } };
     public static JsonSerializerOptions WireJson = new(Json) { WriteIndented = false };
     public static RetryStrategyOptions Retry = new()
@@ -32,8 +33,9 @@ public sealed class ProductOptions
 {
     public string Name { get; set; } = "UsefulNotification";
     public string Executable { get; set; } = "UsefulNotification.exe";
-    public string CommandExecutable { get; set; } = "UsefulNotification.Command.exe";
+    public string CommandExecutable { get; set; } = "notify.exe";
     public string Icon { get; set; } = "app.ico";
+    public string BackgroundArgument { get; set; } = "--background";
 }
 /// <summary>Names the files owned by the portable application.</summary>
 public sealed class StorageOptions
@@ -43,6 +45,8 @@ public sealed class StorageOptions
     public string PreferencesFile { get; set; } = "preferences.json";
     public string ThemesDirectory { get; set; } = "Themes";
     public string TemplatesDirectory { get; set; } = "Templates";
+    public string BrowserCacheDirectory { get; set; } = "WebView2";
+    public string BrowserCacheEnvironmentVariable { get; set; } = "WEBVIEW2_USER_DATA_FOLDER";
     public string BackupExtension { get; set; } = ".bak";
     public string TemporaryExtension { get; set; } = ".pending";
     public int HistoryCapacity { get; set; } = 2000;
@@ -50,6 +54,7 @@ public sealed class StorageOptions
 /// <summary>Configures the local request channel and message budgets.</summary>
 public sealed class TransportOptions
 {
+    public string? ApplicationPath { get; set; }
     public System.Text.Encoding Encoding { get; set; } = new System.Text.UTF8Encoding(false);
     public string PipeName { get; set; } = "UsefulNotification.v1";
     public string MutexName { get; set; } = "Local\\UsefulNotification.v1";
@@ -106,4 +111,11 @@ public sealed class RenderMemoryOptions
     public int Styles { get; set; } = 64;
     public int Templates { get; set; } = 32;
     public int Images { get; set; } = 32;
+}
+/// <summary>Names the shipped HTML template and the reserved unprivileged template action.</summary>
+public sealed class HtmlTemplateOptions
+{
+    public string DefaultFile { get; set; } = "Card.html";
+    public string ResourceName { get; set; } = "UsefulNotification.Templates.Card.html";
+    public string DismissAction { get; set; } = "dismiss";
 }

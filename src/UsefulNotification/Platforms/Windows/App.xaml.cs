@@ -10,6 +10,7 @@ public partial class App : MauiWinUIApplication
         Instance = new Mutex(true, AppConstants.Transport.MutexName, out bool first);
         if (!first)
         {
+            if (Environment.GetCommandLineArgs().Contains(AppConstants.Product.BackgroundArgument)) { Environment.Exit(0); return; }
             var result = RunSafely(() => NotificationClient.SendAsync(operation: NotificationOperation.ShowPanel, startApplication: false).GetAwaiter().GetResult());
             Environment.Exit(result.Succeeded ? 0 : 1);
             return;

@@ -31,9 +31,9 @@ public static class NotificationClient
         try { await pipe.ConnectAsync(AppConstants.Transport.ConnectTimeout, cancellationToken); }
         catch (TimeoutException) when (startApplication)
         {
-            string executable = Path.Combine(AppPaths.PayloadDirectory, AppConstants.Product.Executable);
+            string executable = AppConstants.Transport.ApplicationPath ?? Path.Combine(AppPaths.PayloadDirectory, AppConstants.Product.Executable);
             if (!File.Exists(executable)) throw new FileNotFoundException("Start UsefulNotification before sending from an external SDK application.", executable);
-            using Process? host = Process.Start(new ProcessStartInfo(executable) { UseShellExecute = false, CreateNoWindow = true, ArgumentList = { "--background" } });
+            using Process? host = Process.Start(new ProcessStartInfo(executable) { UseShellExecute = false, CreateNoWindow = true, ArgumentList = { AppConstants.Product.BackgroundArgument } });
             await pipe.ConnectAsync(AppConstants.Transport.StartupTimeout, cancellationToken);
         }
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);

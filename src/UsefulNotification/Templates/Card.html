@@ -1,0 +1,7 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>{{themeCss}}</style></head>
+<body><article class="card" style="{{frameCss}}">
+  <header class="card-header"><span class="sender">{{source}}</span></header>
+  <h2>{{title}}</h2><p>{{message}}</p>
+  <footer class="card-footer"><time>{{time}}</time><button class="primary" onclick="parent.postMessage({action:'{{dismissAction}}'}, '*')">{{dismissLabel}}</button></footer>
+</article></body></html>

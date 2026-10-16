@@ -92,6 +92,7 @@ public sealed record ThemeLayout
 /// <summary>Loads custom theme documents and supplies the predefined palettes.</summary>
 internal static class ThemeCatalog
 {
+    public static long Revision;
     public static List<NotificationTheme> BuiltIn =
     [
         new(),
@@ -125,6 +126,7 @@ internal static class ThemeCatalog
             }
         }
         Themes = loaded;
+        Interlocked.Increment(ref Revision);
     }
 
     /// <summary>Resolves a per-request theme or the selected application theme.</summary>
