@@ -1,0 +1,9 @@
+{
+  "source": "Download worker",
+  "title": "Download",
+  "message": "Receiving files",
+  "kind": "progress",
+  "progress": { "value": 35, "maximum": 100, "label": "35 of 100 files" },
+  "tag": "download",
+  "sticky": true
+}
