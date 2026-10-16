@@ -7,6 +7,38 @@ public sealed record NotificationTheme
     public ThemePalette Palette { get; set; } = new();
     public ThemeTypography Typography { get; set; } = new();
     public ThemeLayout Layout { get; set; } = new();
+    public NotificationFrame Frame { get; set; } = new();
+    public NotificationLevel? DefaultLevel { get; set; }
+}
+/// <summary>Overrides selected parts of a named theme for one sender's notification.</summary>
+public sealed record NotificationAppearance
+{
+    public ThemePalette? Palette { get; set; }
+    public ThemeTypography? Typography { get; set; }
+    public ThemeLayout? Layout { get; set; }
+    public NotificationFrame? Frame { get; set; }
+}
+/// <summary>Selects HTML border edges that use the semantic notification accent.</summary>
+[Flags]
+public enum BorderEdges { None = 0, Top = 1, Right = 2, Bottom = 4, Left = 8, All = Top | Right | Bottom | Left }
+/// <summary>Selects a standard HTML border pattern.</summary>
+public enum BorderPattern { Solid, Dashed, Dotted, Double, None }
+/// <summary>Defines all visible notification framing; none of these edges are drawn by Windows.</summary>
+public sealed record NotificationFrame
+{
+    public BorderThickness Thickness { get; set; } = new();
+    public double CornerRadius { get; set; } = 3;
+    public BorderPattern Pattern { get; set; } = BorderPattern.Solid;
+    public BorderEdges AccentEdges { get; set; } = BorderEdges.Left;
+    public string? AccentColor { get; set; }
+}
+/// <summary>Stores independent HTML border widths in logical pixels.</summary>
+public sealed record BorderThickness
+{
+    public double Top { get; set; } = 1;
+    public double Right { get; set; } = 1;
+    public double Bottom { get; set; } = 1;
+    public double Left { get; set; } = 5;
 }
 /// <summary>Defines surface and semantic colors; no CSS variable is a second source of truth.</summary>
 public sealed record ThemePalette
@@ -37,6 +69,7 @@ public sealed record ThemeTypography
     public int NormalWeight { get; set; } = 400;
     public int StrongWeight { get; set; } = 600;
     public double LineHeight { get; set; } = 1.45;
+    public double HeadingLineHeight { get; set; } = 1.2;
 }
 /// <summary>Defines the layout measurements as one editable theme object.</summary>
 public sealed record ThemeLayout
@@ -59,7 +92,7 @@ public sealed record ThemeLayout
 /// <summary>Loads custom theme documents and supplies the predefined palettes.</summary>
 internal static class ThemeCatalog
 {
-    public static List<NotificationTheme> Themes =
+    public static List<NotificationTheme> BuiltIn =
     [
         new(),
         new() { Name = "Light", Palette = new() { Background = "#f6f7f9", Surface = "#ffffff", Border = "#c7ccd4", Text = "#20252d", Muted = "#606978", Accent = "#2563b5" } },
@@ -68,29 +101,46 @@ internal static class ThemeCatalog
         new() { Name = "Purple", Palette = new() { Accent = "#a68ac9" } },
         new() { Name = "Amber", Palette = new() { Accent = "#d5aa4c" } },
         new() { Name = "Crimson", Palette = new() { Accent = "#dc6571" } },
+        new() { Name = "Info", DefaultLevel = NotificationLevel.Info, Frame = new() { AccentColor = "#4d97ff", AccentEdges = BorderEdges.All } },
+        new() { Name = "Warn", DefaultLevel = NotificationLevel.Warning, Frame = new() { AccentColor = "#d5aa4c", AccentEdges = BorderEdges.All, Thickness = new() { Top = 2, Right = 2, Bottom = 2, Left = 6 } } },
+        new() { Name = "Error", DefaultLevel = NotificationLevel.Error, Frame = new() { AccentColor = "#e06b70", AccentEdges = BorderEdges.All, Thickness = new() { Top = 2, Right = 2, Bottom = 2, Left = 6 } } },
+        new() { Name = "Happy", DefaultLevel = NotificationLevel.Success, Frame = new() { AccentColor = "#49b58c", AccentEdges = BorderEdges.All } },
         new() { Name = "HighContrast", Palette = new() { Background = "#000000", Surface = "#000000", Border = "#ffffff", Text = "#ffffff", Muted = "#ffffff", Accent = "#ffff00", AccentText = "#000000" } }
     ];
+    public static List<NotificationTheme> Themes = [.. BuiltIn];
 
     /// <summary>Reads theme JSON files without modifying built-in definitions.</summary>
     public static void Load()
     {
         string directory = Path.Combine(AppPaths.UserData, AppConstants.Storage.ThemesDirectory);
         Directory.CreateDirectory(directory);
+        var loaded = new List<NotificationTheme>(BuiltIn);
         foreach (string path in Directory.EnumerateFiles(directory, "*.json"))
         {
             var result = RunSafely(() => System.Text.Json.JsonSerializer.Deserialize<NotificationTheme>(File.ReadAllText(path), AppConstants.Json) ?? throw new InvalidDataException(path));
             if (result.Succeeded && result.Value is { } theme)
             {
-                Themes.RemoveAll(item => item.Name.Equals(theme.Name, StringComparison.OrdinalIgnoreCase));
-                Themes.Add(theme);
+                loaded.RemoveAll(item => item.Name.Equals(theme.Name, StringComparison.OrdinalIgnoreCase));
+                loaded.Add(theme);
             }
         }
+        Themes = loaded;
     }
 
     /// <summary>Resolves a per-request theme or the selected application theme.</summary>
     /// <param name="name">Optional request theme name.</param>
     /// <returns>A matching theme, falling back to the default dark theme.</returns>
     public static NotificationTheme Get(string? name = null) => Themes.FirstOrDefault(theme => theme.Name.Equals(name ?? Settings.Theme.Value, StringComparison.OrdinalIgnoreCase)) ?? Themes[0];
+
+    /// <summary>Combines a named theme with the sender's optional appearance objects.</summary>
+    /// <param name="request">The notification's display request.</param>
+    /// <returns>The effective complete theme.</returns>
+    public static NotificationTheme For(NotificationRequest request)
+    {
+        NotificationTheme theme = Get(request.Theme);
+        return request.Appearance is not { } custom ? theme : theme with
+        { Palette = custom.Palette ?? theme.Palette, Typography = custom.Typography ?? theme.Typography, Layout = custom.Layout ?? theme.Layout, Frame = custom.Frame ?? theme.Frame };
+    }
 }
 /// <summary>Stores user-created sound presets and persistent panel placement.</summary>
 internal sealed record DesktopPreferences

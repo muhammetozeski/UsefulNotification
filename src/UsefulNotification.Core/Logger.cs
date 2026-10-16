@@ -62,7 +62,7 @@ public static class Logger
     }
 
 
-    public static string? Log(object? MessageObject, ConsoleColor? consoleColor = null, bool PrintToConsole = true, bool WriteToDisk = true, bool UseNewLine = true,
+    public static string? Log(object? MessageObject, ConsoleColor? consoleColor = null, bool PrintToConsole = false, bool WriteToDisk = true, bool UseNewLine = true,
         [CallerMemberName] string callerFunction = "",
         [CallerFilePath] string callerFilePath = "",
         [CallerLineNumber] int callerLine = 0, bool isRun = true

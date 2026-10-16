@@ -14,6 +14,7 @@ public static class AppConstants
     public static NotificationDefaults Notifications = new();
     public static TransportOptions Transport = new();
     public static WindowOptions Windows = new();
+    public static RenderMemoryOptions RenderMemory = new();
     public static JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true, Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) } };
     public static JsonSerializerOptions WireJson = new(Json) { WriteIndented = false };
     public static RetryStrategyOptions Retry = new()
@@ -49,6 +50,7 @@ public sealed class StorageOptions
 /// <summary>Configures the local request channel and message budgets.</summary>
 public sealed class TransportOptions
 {
+    public System.Text.Encoding Encoding { get; set; } = new System.Text.UTF8Encoding(false);
     public string PipeName { get; set; } = "UsefulNotification.v1";
     public string MutexName { get; set; } = "Local\\UsefulNotification.v1";
     public TimeSpan ConnectTimeout { get; set; } = TimeSpan.FromSeconds(2);
@@ -59,6 +61,10 @@ public sealed class TransportOptions
 /// <summary>Supplies complete behavior when a sender omits notification options.</summary>
 public sealed class NotificationDefaults
 {
+    /// <summary>Resolves a notification's own snooze choices or the shared fallback choices.</summary>
+    /// <param name="request">Optional notification-specific options.</param>
+    /// <returns>The effective nonempty snooze choices.</returns>
+    public TimeSpan[] ResolveSnooze(NotificationRequest? request = null) => request?.Snooze is { Length: > 0 } choices ? choices : Snooze;
     public TimeSpan Lifetime { get; set; } = TimeSpan.FromSeconds(8);
     public TimeSpan SchedulerInterval { get; set; } = TimeSpan.FromSeconds(1);
     public TimeSpan SupervisorInterval { get; set; } = TimeSpan.FromSeconds(5);
@@ -79,9 +85,25 @@ public sealed class NotificationDefaults
 /// <summary>Groups window sizes, screen placement, and display capacity.</summary>
 public sealed class WindowOptions
 {
+    public HotkeyOptions Hotkey { get; set; } = new();
     public System.Drawing.Size Panel { get; set; } = new(860, 720);
-    public System.Drawing.Size Toast { get; set; } = new(430, 220);
+    public System.Drawing.Size Toast { get; set; } = new(392, 160);
+    public DisplaySizing ToastSizing { get; set; } = DisplaySizing.PhysicalPixels;
     public System.Drawing.Size MinimumPanel { get; set; } = new(620, 460);
     public int ScreenMargin { get; set; } = 16;
     public int CardGap { get; set; } = 8;
+}
+/// <summary>Determines whether notification dimensions follow physical pixels or system text scaling.</summary>
+public enum DisplaySizing { PhysicalPixels, DeviceIndependent }
+/// <summary>Identifies the native registration used by the panel shortcut.</summary>
+public sealed class HotkeyOptions
+{
+    public int Id { get; set; } = 1;
+}
+/// <summary>Bounds the resident renderer's stylesheet, template, and image caches.</summary>
+public sealed class RenderMemoryOptions
+{
+    public int Styles { get; set; } = 64;
+    public int Templates { get; set; } = 32;
+    public int Images { get; set; } = 32;
 }

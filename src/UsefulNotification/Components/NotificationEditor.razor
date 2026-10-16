@@ -1,0 +1,90 @@
+<section class="editor">
+    <div class="form-grid">
+        <label class="field">@Strings.Title<input @bind="Draft.Title" /></label>
+        <label class="field">@Strings.Source<input @bind="Draft.Source" /></label>
+        <label class="field span-all">@Strings.Message<textarea rows="@ThemeCatalog.Get().Layout.ReplyRows" @bind="Draft.Message"></textarea></label>
+        <label class="field">@Strings.Kind<select @bind="Draft.Kind">@foreach (var kind in Enum.GetValues<NotificationKind>()) { <option value="@kind">@ThemeStyle.Label(kind)</option> }</select></label>
+        <label class="field">@Strings.Level<select @bind="Draft.Level">@foreach (var level in Enum.GetValues<NotificationLevel>()) { <option value="@level">@ThemeStyle.Label(level)</option> }</select></label>
+        <label class="field">@Strings.Theme<select @bind="Draft.Theme"><option value="">@Strings.Theme</option>@foreach (var theme in ThemeCatalog.Themes) { <option value="@theme.Name">@theme.Name</option> }</select></label>
+        <label class="field">@Strings.Duration<input type="number" min="0" @bind="Seconds" /></label>
+        <label class="check"><input type="checkbox" @bind="Sticky" />@Strings.Sticky</label><label class="check"><input type="checkbox" @bind="Silent" />@Strings.Silent</label>
+        <label class="field">@Strings.When<input type="datetime-local" @bind="Target" /></label>
+        <label class="field">@Strings.Recurrence<select @bind="Recurrence">@foreach (var recurrence in Enum.GetValues<RecurrencePattern>()) { <option value="@recurrence">@ThemeStyle.Label(recurrence)</option> }</select></label>
+        @if (Recurrence == RecurrencePattern.Interval) { <label class="field">@Strings.MinuteFormat.Replace("{0}", Strings.Interval)<input type="number" min="1" @bind="IntervalMinutes" /></label> }
+        @if (Recurrence == RecurrencePattern.Weekly)
+        {
+            <div class="row span-all">@foreach (DayOfWeek day in Enum.GetValues<DayOfWeek>()) { <label class="check"><input type="checkbox" checked="@WeeklyDays.Contains(day)" @onchange="args => SelectDay(day, args)" />@System.Globalization.CultureInfo.CurrentCulture.DateTimeFormat.GetDayName(day)</label> }</div>
+        }
+        @if (Recurrence == RecurrencePattern.Monthly) { <label class="field">@Strings.When<input @bind="MonthlyDays" /></label> }
+        @if (Draft.Kind == NotificationKind.Progress) { <label class="field">@Strings.ProgressValue<input type="number" @bind="ProgressValue" /></label> }
+        @if (Draft.Kind == NotificationKind.Image) { <label class="field span-all">@Strings.ImagePath<input @bind="Draft.Image" /></label> }
+        @if (Draft.Kind is NotificationKind.Checklist or NotificationKind.Choice) { <label class="field span-all">@Strings.Items<textarea @bind="Items"></textarea></label> }
+        @if (Draft.Kind == NotificationKind.Custom) { <label class="field span-all">@Strings.Template<input @bind="Draft.Template" /></label> }
+    </div>
+    @if (Error is not null) { <p>@Error</p> }
+    <div class="actions"><button class="primary" @onclick="Save">@(Request.Id is null ? Strings.Send : Strings.Save)</button><button @onclick="() => Canceled.InvokeAsync()">@Strings.Cancel</button></div>
+</section>
+
+@code {
+    [Parameter, EditorRequired] public NotificationRequest Request { get; set; } = null!;
+    [Parameter] public EventCallback<NotificationRequest> Saved { get; set; }
+    [Parameter] public EventCallback Canceled { get; set; }
+    NotificationRequest Draft = new();
+    NotificationRequest? Prepared;
+    DateTime? Target;
+    RecurrencePattern Recurrence;
+    double IntervalMinutes = TimeSpan.FromHours(1).TotalMinutes;
+    double Seconds = AppConstants.Notifications.Lifetime.TotalSeconds;
+    bool Sticky;
+    bool Silent;
+    double ProgressValue;
+    string Items = string.Empty;
+    string MonthlyDays = string.Empty;
+    HashSet<DayOfWeek> WeeklyDays = [];
+    string? Error;
+
+    /// <summary>Copies editor values once when a different request is selected.</summary>
+    protected override void OnParametersSet()
+    {
+        if (ReferenceEquals(Prepared, Request)) return;
+        Prepared = Request;
+        Draft = Request with { Level = Request.Level ?? AppConstants.Notifications.Level, Kind = Request.Kind ?? NotificationKind.Text };
+        Target = Request.Schedule?.At?.LocalDateTime;
+        Recurrence = Request.Schedule?.Recurrence ?? RecurrencePattern.None;
+        IntervalMinutes = Request.Schedule?.Every?.TotalMinutes ?? TimeSpan.FromHours(1).TotalMinutes;
+        Seconds = Request.Duration?.TotalSeconds ?? AppConstants.Notifications.Lifetime.TotalSeconds;
+        Sticky = Request.Sticky ?? Request.Kind == NotificationKind.Reminder;
+        Silent = Request.Silent ?? false;
+        ProgressValue = Request.Progress?.Value ?? 0;
+        WeeklyDays = Request.Schedule?.WeeklyDays?.ToHashSet() ?? [];
+        MonthlyDays = string.Join(",", Request.Schedule?.MonthlyDays ?? []);
+        Items = string.Join(Environment.NewLine, Request.Kind == NotificationKind.Choice ? Request.Actions.Select(item => item.Label) : Request.Checklist.Select(item => item.Text));
+    }
+
+    /// <summary>Builds a complete request while leaving blank text for the shared defaulting policy.</summary>
+    /// <returns>The editor save operation.</returns>
+    async Task Save()
+    {
+        var result = RunSafely(() =>
+        {
+            Draft.Duration = TimeSpan.FromSeconds(Seconds);
+            Draft.Sticky = Sticky;
+            Draft.Silent = Silent;
+            if (Target is not null || Recurrence != RecurrencePattern.None)
+                Draft.Schedule = new() { At = Target is { } time ? new DateTimeOffset(time) : DateTimeOffset.Now, Recurrence = Recurrence, Every = Recurrence == RecurrencePattern.Interval ? TimeSpan.FromMinutes(IntervalMinutes) : null, WeeklyDays = WeeklyDays.ToArray(), MonthlyDays = MonthlyDays.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Select(int.Parse).ToArray() };
+            if (Draft.Kind == NotificationKind.Progress) Draft.Progress = new() { Value = ProgressValue };
+            if (Draft.Kind == NotificationKind.Input) Draft.Input ??= new() { Placeholder = Strings.InputPlaceholder };
+            string[] items = Items.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (Draft.Kind == NotificationKind.Checklist) Draft.Checklist = items.Select(item => new ChecklistItem { Text = item }).ToList();
+            if (Draft.Kind == NotificationKind.Choice) Draft.Actions = items.Select(item => new NotificationAction { Label = item }).ToList();
+            return Draft;
+        });
+        Error = result.Succeeded ? null : Strings.OperationFailed;
+        if (result.Succeeded) await Saved.InvokeAsync(result.Value);
+    }
+
+    /// <summary>Updates the selected weekdays without modifying the stored request.</summary>
+    /// <param name="day">The weekday.</param>
+    /// <param name="args">The checkbox selection.</param>
+    void SelectDay(DayOfWeek day, ChangeEventArgs args) { if (args.Value is true) WeeklyDays.Add(day); else WeeklyDays.Remove(day); }
+}

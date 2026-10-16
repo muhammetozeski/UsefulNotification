@@ -3,7 +3,7 @@
  <ItemGroup>
   <PackageReference Include="Polly.Core" Version="8.7.0" />
   <PackageReference Include="Microsoft.Windows.CsWin32" Version="0.3.363" PrivateAssets="all" />
-  <InternalsVisibleTo Include="UsefulNotification" /><InternalsVisibleTo Include="UsefulNotification.Command" /><InternalsVisibleTo Include="UsefulNotification.Checks" />
+  <InternalsVisibleTo Include="UsefulNotification" /><InternalsVisibleTo Include="UsefulNotification.Command" />
  </ItemGroup>
  <Import Project="Localization.resources.props" />
 </Project>

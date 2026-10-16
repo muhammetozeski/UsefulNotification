@@ -11,6 +11,7 @@ internal sealed class NotificationHub : IDisposable
     const bool IsLogEnabled = true;
     readonly object Gate = new();
     readonly List<NotificationEntry> Entries;
+    string Committed;
     readonly Dictionary<Guid, DateTimeOffset> Hovered = [];
     readonly CancellationTokenSource Stopping = new();
     readonly Timer Supervisor;
@@ -26,6 +27,7 @@ internal sealed class NotificationHub : IDisposable
     public NotificationHub()
     {
         Entries = PortableStore.Read(AppConstants.Storage.HistoryFile, new List<NotificationEntry>());
+        Committed = JsonSerializer.Serialize(Entries, AppConstants.WireJson);
         Preferences = PortableStore.Read(AppConstants.Storage.PreferencesFile, new DesktopPreferences());
         foreach (var entry in Entries.Where(item => item.Status is NotificationStatus.Visible or NotificationStatus.Pending))
         {
@@ -52,7 +54,7 @@ internal sealed class NotificationHub : IDisposable
     public NotificationResponse Apply(NotificationCommand command)
     {
         if (command.Operation == NotificationOperation.ShowPanel) { PanelRequested?.Invoke(); return new() { Accepted = true }; }
-        if (command.Operation == NotificationOperation.Shutdown) { ShutdownRequested?.Invoke(); return new() { Accepted = true }; }
+        if (command.Operation == NotificationOperation.Shutdown) return new() { Accepted = true };
         if (command.Operation == NotificationOperation.ReloadSettings)
         {
             SettingsManager.LoadSettings(AppConstants.ConfigFileName);
@@ -79,6 +81,17 @@ internal sealed class NotificationHub : IDisposable
                     if (existing is not null)
                     {
                         existing.Request = Merge(existing.Request, request);
+                        if (request.Schedule is not null)
+                        {
+                            existing.DueAt = request.Schedule.At ?? DateTimeOffset.Now.Add(request.Schedule.After ?? TimeSpan.Zero);
+                            existing.SeriesAnchor = existing.DueAt;
+                            existing.Status = existing.DueAt > DateTimeOffset.Now ? NotificationStatus.Scheduled : NotificationStatus.Pending;
+                            existing.DeliveryStartedAt = null;
+                            existing.VisibleAt = null;
+                            existing.ExpiresAt = null;
+                        }
+                        if (existing.Status == NotificationStatus.Visible && existing.Request.Kind == NotificationKind.Progress && existing.Request.Progress is { Value: { } value } progress && value >= progress.Maximum)
+                            existing.ExpiresAt = DateTimeOffset.Now.Add(existing.Request.Duration ?? AppConstants.Notifications.Lifetime);
                         if (existing.Status is NotificationStatus.Dismissed or NotificationStatus.Expired or NotificationStatus.Failed)
                         { existing.Status = NotificationStatus.Pending; existing.VisibleAt = null; existing.DeliveryStartedAt = null; existing.Result = null; }
                         resultId = existing.Id;
@@ -87,7 +100,12 @@ internal sealed class NotificationHub : IDisposable
                     {
                         DateTimeOffset now = DateTimeOffset.Now;
                         DateTimeOffset due = request.Schedule?.At ?? now.Add(request.Schedule?.After ?? TimeSpan.Zero);
-                        request = request with { Source = string.IsNullOrWhiteSpace(request.Source) ? AppConstants.Product.Name : request.Source, Level = request.Level ?? AppConstants.Notifications.Level };
+                        request = request with
+                        {
+                            Source = string.IsNullOrWhiteSpace(request.Source) ? AppConstants.Product.Name : request.Source,
+                            Level = request.Level ?? ThemeCatalog.Get(request.Theme).DefaultLevel ?? AppConstants.Notifications.Level, Priority = request.Priority ?? NotificationPriority.Normal,
+                            Kind = request.Kind ?? (request.Progress is not null ? NotificationKind.Progress : request.Image is not null ? NotificationKind.Image : request.Input is not null ? NotificationKind.Input : request.Checklist.Count > 0 ? NotificationKind.Checklist : request.Actions.Count > 0 ? NotificationKind.Choice : request.Schedule is not null ? NotificationKind.Reminder : NotificationKind.Text)
+                        };
                         request.Title = string.IsNullOrWhiteSpace(request.Title) ? request.Source : request.Title;
                         request.Message = string.IsNullOrWhiteSpace(request.Message) ? Strings.NewNotification : request.Message;
                         var entry = new NotificationEntry { Id = request.Id ?? Guid.NewGuid(), Request = request, DueAt = due, SeriesAnchor = due, Status = due > now ? NotificationStatus.Scheduled : NotificationStatus.Pending, Order = Entries.Count };
@@ -99,10 +117,21 @@ internal sealed class NotificationHub : IDisposable
                 case NotificationOperation.Snooze:
                     NotificationEntry selected = Entries.Single(item => item.Id == command.Id);
                     Close(selected, command.Operation == NotificationOperation.Snooze ? NotificationStatus.Snoozed : NotificationStatus.Dismissed,
-                        command.Delay ?? AppConstants.Notifications.Snooze[0]);
+                        command.Delay ?? AppConstants.Notifications.ResolveSnooze(selected.Request)[0]);
                     break;
                 case NotificationOperation.Clear:
                     Entries.RemoveAll(item => item.Status is NotificationStatus.Dismissed or NotificationStatus.Expired or NotificationStatus.Failed);
+                    break;
+                case NotificationOperation.Delete:
+                    Entries.RemoveAll(item => item.Id == command.Id);
+                    Hovered.Remove(command.Id ?? Guid.Empty);
+                    break;
+                case NotificationOperation.Move:
+                    var ordered = Entries.OrderBy(item => item.Order).ToList();
+                    var moved = ordered.Single(item => item.Id == command.Id);
+                    ordered.Remove(moved);
+                    ordered.Insert(Math.Clamp(command.Order ?? 0, 0, ordered.Count), moved);
+                    for (int index = 0; index < ordered.Count; index++) ordered[index].Order = index;
                     break;
                 default: throw new ArgumentOutOfRangeException(nameof(command.Operation));
             }
@@ -125,11 +154,11 @@ internal sealed class NotificationHub : IDisposable
             foreach (var entry in Entries)
             {
                 if (entry.Status is NotificationStatus.Scheduled or NotificationStatus.Snoozed && entry.DueAt <= now)
-                { entry.Status = NotificationStatus.Pending; changed = true; }
+                { entry.Status = NotificationStatus.Pending; entry.Result = null; entry.VisibleAt = null; changed = true; }
                 if (entry.Status == NotificationStatus.Visible && !Hovered.ContainsKey(entry.Id) && entry.ExpiresAt <= now)
                 { Close(entry, NotificationStatus.Expired); changed = true; }
                 if (entry.Status == NotificationStatus.Pending && entry.DeliveryStartedAt is { } started && now - started > AppConstants.Notifications.DeliveryDeadline)
-                { entry.Status = NotificationStatus.Failed; failed.Add(entry); changed = true; }
+                { entry.Status = NotificationStatus.Failed; entry.Result = new() { Id = entry.Id, Status = NotificationStatus.Failed }; failed.Add(entry); changed = true; }
             }
             int active = Entries.Count(item => item.Status == NotificationStatus.Visible || item.Status == NotificationStatus.Pending && item.DeliveryStartedAt is not null);
             foreach (var entry in Entries.Where(item => item.Status == NotificationStatus.Pending && item.DeliveryStartedAt is null)
@@ -155,7 +184,7 @@ internal sealed class NotificationHub : IDisposable
                 if (entry is null || entry.Status != NotificationStatus.Pending || entry.DeliveryStartedAt is null) continue;
                 entry.Status = NotificationStatus.Visible;
                 entry.VisibleAt = DateTimeOffset.Now;
-                bool sticky = entry.Request.Sticky ?? entry.Request.Kind is NotificationKind.Reminder or NotificationKind.Input or NotificationKind.Choice or NotificationKind.Checklist;
+                bool sticky = entry.Request.Sticky ?? (entry.Request.Kind is NotificationKind.Reminder or NotificationKind.Input or NotificationKind.Choice or NotificationKind.Checklist || entry.Request.Kind == NotificationKind.Progress && (entry.Request.Progress?.Value is null || entry.Request.Progress.Value < entry.Request.Progress.Maximum));
                 if (!sticky && (entry.Request.Duration ?? AppConstants.Notifications.Lifetime) > TimeSpan.Zero)
                     entry.ExpiresAt = entry.VisibleAt + (entry.Request.Duration ?? AppConstants.Notifications.Lifetime);
                 changed = true;
@@ -181,6 +210,7 @@ internal sealed class NotificationHub : IDisposable
             if (hover is not null)
             {
                 if (!Settings.PauseOnHover.Value) return;
+                if (entry.Status is not (NotificationStatus.Visible or NotificationStatus.Pending)) return;
                 if (hover.Value) Hovered.TryAdd(id, DateTimeOffset.Now);
                 else if (Hovered.Remove(id, out DateTimeOffset since) && entry.ExpiresAt is not null) entry.ExpiresAt += DateTimeOffset.Now - since;
                 return;
@@ -197,13 +227,22 @@ internal sealed class NotificationHub : IDisposable
                 foreach (string argument in action.Arguments) start.ArgumentList.Add(argument);
                 using Process? process = Process.Start(start);
             }
-            TimeSpan? requestedSnooze = snooze ?? (action?.Kind == NotificationActionKind.Snooze ? action.Snooze ?? AppConstants.Notifications.Snooze[0] : null);
+            TimeSpan? requestedSnooze = snooze ?? (action?.Kind == NotificationActionKind.Snooze ? action.Snooze ?? AppConstants.Notifications.ResolveSnooze(entry.Request)[0] : null);
             entry.Result = new() { Id = id, ActionId = action?.Id, Reply = reply, CheckedItems = checkedItems ?? [], Status = requestedSnooze is null ? NotificationStatus.Dismissed : NotificationStatus.Snoozed };
             Close(entry, entry.Result.Status, requestedSnooze);
             Persist();
         }
         Changed?.Invoke();
         Tick();
+        if (entry.Request.CallbackPipe is { Length: > 0 } callback && entry.Result is { } result)
+            _ = RunSafelyAsync(async token =>
+            {
+                using var pipe = new NamedPipeClientStream(".", callback, PipeDirection.Out, PipeOptions.Asynchronous);
+                await pipe.ConnectAsync(AppConstants.Transport.ConnectTimeout, token);
+                using var writer = new StreamWriter(pipe, AppConstants.Transport.Encoding);
+                await writer.WriteLineAsync(JsonSerializer.Serialize(result, AppConstants.WireJson).AsMemory(), token);
+                await writer.FlushAsync(token);
+            });
     }
 
     /// <summary>Saves editable sound and window preferences in the portable data directory.</summary>
@@ -221,14 +260,16 @@ internal sealed class NotificationHub : IDisposable
                 await pipe.WaitForConnectionAsync(Stopping.Token);
                 using var budget = CancellationTokenSource.CreateLinkedTokenSource(Stopping.Token);
                 budget.CancelAfter(AppConstants.Transport.ConnectTimeout);
-                using var reader = new StreamReader(pipe, Encoding.UTF8, leaveOpen: true);
-                using var writer = new StreamWriter(pipe, Encoding.UTF8, leaveOpen: true) { AutoFlush = true };
+                using var reader = new StreamReader(pipe, AppConstants.Transport.Encoding, leaveOpen: true);
+                using var writer = new StreamWriter(pipe, AppConstants.Transport.Encoding, leaveOpen: true);
                 NotificationResponse response;
+                NotificationCommand? command = null;
                 try
                 {
                     string payload = await reader.ReadLineAsync(budget.Token) ?? throw new InvalidDataException("Empty request.");
                     if (payload.Length > AppConstants.Transport.MaximumMessageCharacters) throw new InvalidDataException("The request exceeds the channel limit.");
-                    response = Apply(JsonSerializer.Deserialize<NotificationCommand>(payload, AppConstants.Json) ?? throw new InvalidDataException("Invalid request."));
+                    command = JsonSerializer.Deserialize<NotificationCommand>(payload, AppConstants.Json) ?? throw new InvalidDataException("Invalid request.");
+                    response = Apply(command);
                 }
                 catch (Exception error) when (error is not OperationCanceledException)
                 {
@@ -236,6 +277,8 @@ internal sealed class NotificationHub : IDisposable
                     response = new() { Error = error.Message };
                 }
                 await writer.WriteLineAsync(JsonSerializer.Serialize(response, AppConstants.WireJson).AsMemory(), budget.Token);
+                await writer.FlushAsync(budget.Token);
+                if (response.Accepted && command?.Operation == NotificationOperation.Shutdown) ShutdownRequested?.Invoke();
             }
             catch (OperationCanceledException) when (Stopping.IsCancellationRequested) { return; }
             catch (Exception error) { Log(error, PrintToConsole: false, isRun: IsLogEnabled); }
@@ -263,10 +306,13 @@ internal sealed class NotificationHub : IDisposable
     static NotificationRequest Merge(NotificationRequest previous, NotificationRequest update) => previous with
     {
         Title = update.Title ?? previous.Title, Message = update.Message ?? previous.Message, Source = update.Source ?? previous.Source,
+        Kind = update.Kind ?? previous.Kind, Priority = update.Priority ?? previous.Priority,
+        Appearance = update.Appearance ?? previous.Appearance,
         Level = update.Level ?? previous.Level, Theme = update.Theme ?? previous.Theme, Progress = update.Progress ?? previous.Progress,
         Sticky = update.Sticky ?? previous.Sticky, Silent = update.Silent ?? previous.Silent, Duration = update.Duration ?? previous.Duration,
         Image = update.Image ?? previous.Image, Input = update.Input ?? previous.Input, Schedule = update.Schedule ?? previous.Schedule,
         Sound = update.Sound ?? previous.Sound, Template = update.Template ?? previous.Template,
+        Snooze = update.Snooze ?? previous.Snooze, CallbackPipe = update.CallbackPipe ?? previous.CallbackPipe,
         Actions = update.Actions.Count > 0 ? update.Actions : previous.Actions, Checklist = update.Checklist.Count > 0 ? update.Checklist : previous.Checklist,
         Data = update.Data.Count > 0 ? update.Data : previous.Data
     };
@@ -303,6 +349,7 @@ internal sealed class NotificationHub : IDisposable
         {
             TimeSpan every = schedule.Every ?? throw new ArgumentException("Missing recurrence interval.");
             if (every <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(schedule.Every));
+            if (anchor > after) return anchor;
             return anchor.AddTicks((Math.Max(0, (after - anchor).Ticks / every.Ticks) + 1) * every.Ticks);
         }
         while (next <= after || !Matches(next))
@@ -332,6 +379,16 @@ internal sealed class NotificationHub : IDisposable
     {
         var removable = Entries.Where(item => item.Status is NotificationStatus.Dismissed or NotificationStatus.Expired or NotificationStatus.Failed).OrderByDescending(item => item.CreatedAt).Skip(AppConstants.Storage.HistoryCapacity).ToHashSet();
         Entries.RemoveAll(removable.Contains);
-        PortableStore.Write(AppConstants.Storage.HistoryFile, Entries);
+        try
+        {
+            PortableStore.Write(AppConstants.Storage.HistoryFile, Entries);
+            Committed = JsonSerializer.Serialize(Entries, AppConstants.WireJson);
+        }
+        catch
+        {
+            Entries.Clear();
+            Entries.AddRange(JsonSerializer.Deserialize<List<NotificationEntry>>(Committed, AppConstants.Json)!);
+            throw;
+        }
     }
 }

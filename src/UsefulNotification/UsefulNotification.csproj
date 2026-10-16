@@ -14,7 +14,6 @@
   <PackageReference Include="Microsoft.Maui.Controls" Version="10.0.20" />
   <PackageReference Include="Microsoft.AspNetCore.Components.WebView.Maui" Version="10.0.20" />
   <PackageReference Include="H.NotifyIcon.Maui" Version="2.4.1" />
-  <PackageReference Include="Microsoft.Windows.CsWin32" Version="0.3.363" PrivateAssets="all" />
   <Content Include="../../Assets/app.ico" Link="app.ico" CopyToOutputDirectory="PreserveNewest" />
  </ItemGroup>
 </Project>

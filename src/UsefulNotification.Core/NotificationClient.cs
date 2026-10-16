@@ -15,17 +15,19 @@ public static class NotificationClient
     /// <param name="operation">The requested operation; Send is the default.</param>
     /// <param name="id">Existing notification identity for management operations.</param>
     /// <param name="delay">Snooze duration for a management operation.</param>
+    /// <param name="order">Target position for a manual-order operation.</param>
     /// <param name="startApplication">Whether to launch the adjacent application if the pipe is unavailable.</param>
     /// <param name="cancellationToken">Cancels connection and communication.</param>
     /// <returns>The server acknowledgement or a rejected response.</returns>
     public static async Task<NotificationResponse> SendAsync(NotificationRequest? notification = null,
-        NotificationOperation operation = NotificationOperation.Send, Guid? id = null, TimeSpan? delay = null,
+        NotificationOperation operation = NotificationOperation.Send, Guid? id = null, TimeSpan? delay = null, int? order = null,
         bool startApplication = true, CancellationToken cancellationToken = default)
     {
-        var command = new NotificationCommand { Operation = operation, Id = id, Delay = delay, Notification = notification };
+        var command = new NotificationCommand { Operation = operation, Id = id, Delay = delay, Order = order, Notification = notification };
         if (operation == NotificationOperation.Send)
             command.Notification = (notification ?? new()) with { Id = notification?.Id ?? Guid.NewGuid(), Source = notification?.Source ?? Assembly.GetEntryAssembly()?.GetName().Name ?? AppConstants.Product.Name };
         using var pipe = new NamedPipeClientStream(".", AppConstants.Transport.PipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
+        Log($"Connecting; pipe={AppConstants.Transport.PipeName}", PrintToConsole: false, isRun: IsLogEnabled);
         try { await pipe.ConnectAsync(AppConstants.Transport.ConnectTimeout, cancellationToken); }
         catch (TimeoutException) when (startApplication)
         {
@@ -34,13 +36,16 @@ public static class NotificationClient
             using Process? host = Process.Start(new ProcessStartInfo(executable) { UseShellExecute = false, CreateNoWindow = true, ArgumentList = { "--background" } });
             await pipe.ConnectAsync(AppConstants.Transport.StartupTimeout, cancellationToken);
         }
-        using var writer = new StreamWriter(pipe, Encoding.UTF8, leaveOpen: true) { AutoFlush = true };
-        using var reader = new StreamReader(pipe, Encoding.UTF8, leaveOpen: true);
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        budget.CancelAfter(AppConstants.Timeout.Timeout);
+        using var writer = new StreamWriter(pipe, AppConstants.Transport.Encoding, leaveOpen: true);
+        using var reader = new StreamReader(pipe, AppConstants.Transport.Encoding, leaveOpen: true);
         string payload = JsonSerializer.Serialize(command, AppConstants.WireJson);
         if (payload.Length > AppConstants.Transport.MaximumMessageCharacters) throw new ArgumentException("The request exceeds the configured channel limit.", nameof(notification));
         Log($"Request; operation={operation}; id={command.Notification?.Id ?? id}; characters={payload.Length}", PrintToConsole: false, isRun: IsLogEnabled);
-        await writer.WriteLineAsync(payload.AsMemory(), cancellationToken);
-        string response = await reader.ReadLineAsync(cancellationToken) ?? throw new IOException("The application closed the response channel.");
+        await writer.WriteLineAsync(payload.AsMemory(), budget.Token);
+        await writer.FlushAsync(budget.Token);
+        string response = await reader.ReadLineAsync(budget.Token).AsTask().WaitAsync(budget.Token) ?? throw new IOException("The application closed the response channel.");
         return JsonSerializer.Deserialize<NotificationResponse>(response, AppConstants.Json) ?? throw new InvalidDataException("The application returned an empty response.");
     }
 

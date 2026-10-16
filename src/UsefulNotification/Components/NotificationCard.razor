@@ -1,0 +1,115 @@
+<article class="card" style="@ThemeStyle.CardStyle(Entry)" @onmouseenter="() => Hover(true)" @onmouseleave="() => Hover(false)">
+    <header class="card-header">
+        <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4M12 1v2" /></svg>
+        <div class="meta"><span class="sender">@Entry.Request.Source</span><small>@ThemeStyle.Label(Entry.Request.Level ?? AppConstants.Notifications.Level)</small></div>
+        <button title="@Strings.Dismiss" @onclick="() => Respond()">&#x2715;</button>
+    </header>
+    <div class="card-content">
+        <h2>@Entry.Request.Title</h2>
+        <p>@Entry.Request.Message</p>
+        @if (Entry.Request.Progress is { } progress)
+        {
+            <progress value="@progress.Value" max="@progress.Maximum"></progress>
+            @if (progress.Label is not null) { <small>@progress.Label</small> }
+        }
+        @if (!string.IsNullOrWhiteSpace(Entry.Request.Image)) { <img src="@Image" alt="@Entry.Request.Title" /> }
+        @if (Entry.Request.Input is { } input)
+        {
+            @if (input.Multiline) { <textarea rows="@ThemeCatalog.Get().Layout.ReplyRows" placeholder="@(input.Placeholder ?? Strings.InputPlaceholder)" @bind="Reply"></textarea> }
+            else { <input placeholder="@(input.Placeholder ?? Strings.InputPlaceholder)" @bind="Reply" /> }
+        }
+        @foreach (var item in Entry.Request.Checklist)
+        {
+            <label class="check"><input type="checkbox" checked="@Checked.Contains(item.Id)" @onchange="args => Check(item.Id, args)" />@item.Text</label>
+        }
+        @if (Entry.Request.Kind == NotificationKind.Custom && !string.IsNullOrWhiteSpace(CustomHtml))
+        { <iframe title="@Entry.Request.Title" data-notification="@Entry.Id" sandbox="allow-scripts" srcdoc="@CustomHtml"></iframe> }
+        @if (!string.IsNullOrWhiteSpace(Error)) { <small>@Error</small> }
+        <div class="card-footer">
+            <time>@Entry.CreatedAt.ToString(AppConstants.Notifications.TimeFormat)</time>
+            <div class="card-actions">
+            @if (Entry.Request.Kind == NotificationKind.Reminder || Entry.Request.Snooze is not null)
+            {
+                <span class="snooze"><button @onclick="() => Respond(snooze: SnoozeDelay)">@Strings.Snooze</button><details><summary>&#x25BE;</summary><div class="snooze-options">@foreach (TimeSpan duration in AppConstants.Notifications.ResolveSnooze(Entry.Request)) { <button @onclick="() => Respond(snooze: duration)">@string.Format(Strings.MinuteFormat, duration.TotalMinutes)</button> }</div></details></span>
+            }
+            @foreach (var action in Entry.Request.Actions) { <button class="primary" @onclick="() => Respond(action)">@(action.Label ?? ThemeStyle.Label(action.Kind))</button> }
+            @if (Entry.Request.Input is not null && Entry.Request.Actions.All(action => action.Kind != NotificationActionKind.Reply))
+            { <button class="primary" @onclick="() => Respond(new() { Kind = NotificationActionKind.Reply })">@Strings.Reply</button> }
+            <button class="primary" @onclick="() => Respond()">@Strings.Dismiss</button>
+            </div>
+        </div>
+        @if (!Toast)
+        {
+            <small>@ThemeStyle.Label(Entry.Status) @if (Entry.Status is NotificationStatus.Scheduled or NotificationStatus.Snoozed) { <span> · @Entry.DueAt.ToString(AppConstants.Notifications.TimeFormat)</span> }</small>
+            <div class="card-tools"><button @onclick="() => Edit.InvokeAsync(Entry)">@Strings.Edit</button><button @onclick="Duplicate">@Strings.Duplicate</button><button @onclick="Retry">@Strings.Retry</button><button @onclick="() => Move(-1)">@Strings.MoveUp</button><button @onclick="() => Move(1)">@Strings.MoveDown</button><button @onclick="Delete">@Strings.Delete</button></div>
+        }
+    </div>
+</article>
+
+@code {
+    [Parameter, EditorRequired] public NotificationEntry Entry { get; set; } = null!;
+    [Parameter] public bool Toast { get; set; }
+    [Parameter] public EventCallback<NotificationEntry> Edit { get; set; }
+    string? Reply;
+    string? Error;
+    string? Image;
+    string? CustomHtml;
+    Guid PreparedId;
+    string? PreparedContent;
+    HashSet<string> Checked = [];
+    TimeSpan SnoozeDelay = AppConstants.Notifications.Snooze[0];
+
+    /// <summary>Prepares local media and templates without treating their errors as successful content.</summary>
+    protected override void OnParametersSet()
+    {
+        if (PreparedId != Entry.Id)
+        {
+            PreparedId = Entry.Id;
+            Reply = Entry.Request.Input?.Value;
+            Checked = Entry.Request.Checklist.Where(item => item.Checked).Select(item => item.Id).ToHashSet();
+            SnoozeDelay = AppConstants.Notifications.ResolveSnooze(Entry.Request)[0];
+        }
+        string content = System.Text.Json.JsonSerializer.Serialize(Entry.Request, AppConstants.WireJson);
+        if (content == PreparedContent) return;
+        PreparedContent = content;
+        Image = null;
+        CustomHtml = null;
+        var result = RunSafely(() =>
+        {
+            if (Entry.Request.Image is not null) Image = ThemeStyle.ImageSource(Entry.Request.Image);
+            if (Entry.Request.Kind == NotificationKind.Custom) CustomHtml = ThemeStyle.Template(Entry);
+        });
+        if (!result.Succeeded) Error = Strings.OperationFailed;
+    }
+
+    /// <summary>Applies a selection and returns user input through the common notification journal.</summary>
+    /// <param name="action">Optional explicit action.</param>
+    /// <param name="snooze">Optional selected snooze duration.</param>
+    void Respond(NotificationAction? action = null, TimeSpan? snooze = null)
+    {
+        var result = RunSafely(() => App.Hub.Interact(Entry.Id, action, Reply, Checked.ToArray(), snooze: snooze));
+        Error = result.Succeeded ? null : Strings.OperationFailed;
+    }
+
+    /// <summary>Pauses or resumes expiry according to the user's setting.</summary>
+    /// <param name="hover">Whether the pointer entered the card.</param>
+    void Hover(bool hover) => RunSafely(() => App.Hub.Interact(Entry.Id, hover: hover));
+
+    /// <summary>Updates a local checklist selection until acknowledgement.</summary>
+    /// <param name="id">The item's stable identity.</param>
+    /// <param name="args">The checkbox state.</param>
+    void Check(string id, ChangeEventArgs args) { if (args.Value is true) Checked.Add(id); else Checked.Remove(id); }
+
+    /// <summary>Creates an independent notification with a new identity.</summary>
+    void Duplicate() => RunSafely(() => App.Hub.Apply(new() { Notification = Entry.Request with { Id = Guid.NewGuid(), Schedule = null, Tag = null } }));
+
+    /// <summary>Resubmits a completed notification through the same acceptance path.</summary>
+    void Retry() => RunSafely(() => App.Hub.Apply(new() { Operation = NotificationOperation.Update, Id = Entry.Id, Notification = Entry.Request }));
+
+    /// <summary>Moves a notification in the shared manual ordering.</summary>
+    /// <param name="direction">Relative order change.</param>
+    void Move(int direction) => RunSafely(() => App.Hub.Apply(new() { Operation = NotificationOperation.Move, Id = Entry.Id, Order = Entry.Order + direction }));
+
+    /// <summary>Removes an entire notification or recurring series on an explicit user action.</summary>
+    void Delete() => RunSafely(() => App.Hub.Apply(new() { Operation = NotificationOperation.Delete, Id = Entry.Id }));
+}

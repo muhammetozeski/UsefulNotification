@@ -13,7 +13,7 @@ public enum RecurrencePattern { None, Hourly, Daily, Weekdays, Weekly, Monthly, 
 /// <summary>Determines the effect of a button selected by the user.</summary>
 public enum NotificationActionKind { Dismiss, Snooze, OpenUri, RunCommand, Reply, Callback }
 /// <summary>Names operations accepted by the local application channel.</summary>
-public enum NotificationOperation { Send, Update, Dismiss, Snooze, List, Clear, ShowPanel, ReloadSettings, Shutdown, Get }
+public enum NotificationOperation { Send, Update, Dismiss, Snooze, List, Clear, ShowPanel, ReloadSettings, Shutdown, Get, Delete, Move }
 
 /// <summary>Describes a notification; all fields are optional, including title and message.</summary>
 public sealed record NotificationRequest
@@ -23,11 +23,12 @@ public sealed record NotificationRequest
     public string? Title { get; set; }
     public string? Message { get; set; }
     public NotificationLevel? Level { get; set; }
-    public NotificationKind Kind { get; set; }
-    public NotificationPriority Priority { get; set; } = NotificationPriority.Normal;
+    public NotificationKind? Kind { get; set; }
+    public NotificationPriority? Priority { get; set; }
     public string? Group { get; set; }
     public string? Tag { get; set; }
     public string? Theme { get; set; }
+    public NotificationAppearance? Appearance { get; set; }
     public bool? Sticky { get; set; }
     public bool? Silent { get; set; }
     public TimeSpan? Duration { get; set; }
@@ -130,6 +131,7 @@ public sealed record NotificationCommand
     public NotificationRequest? Notification { get; set; }
     public Guid? Id { get; set; }
     public TimeSpan? Delay { get; set; }
+    public int? Order { get; set; }
 }
 /// <summary>Acknowledges persisted acceptance or explains a rejected request.</summary>
 public sealed record NotificationResponse

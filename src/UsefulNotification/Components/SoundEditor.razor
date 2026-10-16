@@ -1,0 +1,64 @@
+<div class="sound-editor">
+    <div class="row"><select value="@Selected.Name" @onchange="Select">@foreach (var sound in App.Hub.Preferences.Sounds) { <option value="@sound.Name">@sound.Name</option> }</select><button @onclick="Add">@Strings.New</button><button @onclick="Duplicate">@Strings.Duplicate</button><button @onclick="Delete">@Strings.Delete</button></div>
+    <label class="field">@Strings.Name<input @bind="Selected.Name" /></label>
+    <label class="field">@Strings.SoundFile<input @bind="Selected.AudioFile" /></label>
+    @for (int index = 0; index < Selected.Steps.Count; index++)
+    {
+        int toneIndex = index;
+        ToneStep step = Selected.Steps[index];
+        <div class="tone">
+            <label class="field">@Strings.Frequency<input type="number" value="@step.Frequency" @onchange="args => ChangeTone(toneIndex, ToneField.Frequency, args)" /></label>
+            <label class="field">@Strings.Milliseconds<input type="number" value="@step.Duration.TotalMilliseconds" @onchange="args => ChangeTone(toneIndex, ToneField.Duration, args)" /></label>
+            <label class="field">@Strings.Pause<input type="number" value="@step.Pause.TotalMilliseconds" @onchange="args => ChangeTone(toneIndex, ToneField.Pause, args)" /></label>
+            <div class="row"><button @onclick="() => Move(toneIndex, -1)">@Strings.MoveUp</button><button @onclick="() => Move(toneIndex, 1)">@Strings.MoveDown</button><button @onclick="() => Selected.Steps.RemoveAt(toneIndex)">@Strings.Delete</button></div>
+        </div>
+    }
+    <div class="actions"><button @onclick="() => Selected.Steps.Add(AppConstants.Notifications.Sound.Steps[0])">@Strings.AddTone</button><button @onclick="() => App.Host.PlaySoundAsync(Selected)">@Strings.TestSound</button><button class="primary" @onclick="Save">@Strings.Save</button></div>
+    @if (Error is not null) { <p>@Error</p> }
+</div>
+
+@code {
+    /// <summary>Identifies an editable part of one complete tone step.</summary>
+    enum ToneField { Frequency, Duration, Pause }
+    SoundPattern Selected = null!;
+    string? Error;
+
+    /// <summary>Selects the configured preset without creating another settings system.</summary>
+    protected override void OnInitialized() => Selected = App.Hub.Preferences.Sounds.FirstOrDefault(sound => sound.Name == App.Hub.Preferences.SelectedSound) ?? App.Hub.Preferences.Sounds[0];
+
+    /// <summary>Selects one existing sound.</summary>
+    /// <param name="args">The chosen preset name.</param>
+    void Select(ChangeEventArgs args) => Selected = App.Hub.Preferences.Sounds.First(sound => sound.Name == args.Value?.ToString());
+
+    /// <summary>Creates an editable sound with the default tone sequence.</summary>
+    void Add() { Selected = new() { Name = Strings.New, Steps = [.. AppConstants.Notifications.Sound.Steps] }; App.Hub.Preferences.Sounds.Add(Selected); }
+
+    /// <summary>Copies the selected sequence as an independent preset.</summary>
+    void Duplicate() { Selected = Selected with { Name = Selected.Name + " " + Strings.Duplicate, Steps = [.. Selected.Steps] }; App.Hub.Preferences.Sounds.Add(Selected); }
+
+    /// <summary>Removes a preset while preserving at least one selectable sound.</summary>
+    void Delete() { if (App.Hub.Preferences.Sounds.Count <= 1) return; App.Hub.Preferences.Sounds.Remove(Selected); Selected = App.Hub.Preferences.Sounds[0]; }
+
+    /// <summary>Edits one field while keeping duration and pause represented as TimeSpan values.</summary>
+    /// <param name="index">The tone's current position.</param>
+    /// <param name="field">The field being edited.</param>
+    /// <param name="args">The entered number.</param>
+    void ChangeTone(int index, ToneField field, ChangeEventArgs args)
+    {
+        if (!double.TryParse(args.Value?.ToString(), out double value)) { Error = Strings.OperationFailed; return; }
+        ToneStep step = Selected.Steps[index];
+        Selected.Steps[index] = field switch { ToneField.Frequency => step with { Frequency = (int)value }, ToneField.Duration => step with { Duration = TimeSpan.FromMilliseconds(value) }, _ => step with { Pause = TimeSpan.FromMilliseconds(value) } };
+    }
+
+    /// <summary>Reorders one step in the sequence.</summary>
+    /// <param name="index">The source position.</param>
+    /// <param name="direction">The relative target position.</param>
+    void Move(int index, int direction) { int target = index + direction; if (target >= 0 && target < Selected.Steps.Count) (Selected.Steps[index], Selected.Steps[target]) = (Selected.Steps[target], Selected.Steps[index]); }
+
+    /// <summary>Persists presets and selects this sequence for notifications.</summary>
+    void Save()
+    {
+        var result = RunSafely(() => { App.Hub.Preferences.SelectedSound = Selected.Name; App.Hub.SavePreferences(); });
+        Error = result.Succeeded ? null : Strings.OperationFailed;
+    }
+}
