@@ -17,13 +17,13 @@ public sealed record NotificationTheme
     /// <summary>Editable theme identity used by host files and UI; initially Dark. Requests transfer the complete object rather than resolving this name.</summary>
     public string Name { get; set; } = nameof(NotificationThemes.Dark);
     /// <summary>Complete surface and semantic colors. Initialized independently for a newly constructed theme.</summary>
-    public ThemePalette Palette { get; set; } = new();
+    [JsonIgnore(Condition = JsonIgnoreCondition.Never)] public ThemePalette Palette { get; set; } = new();
     /// <summary>Font family, text sizes and line metrics used to generate the HTML styles.</summary>
-    public ThemeTypography Typography { get; set; } = new();
+    [JsonIgnore(Condition = JsonIgnoreCondition.Never)] public ThemeTypography Typography { get; set; } = new();
     /// <summary>Spacing and control dimensions used to generate the HTML styles.</summary>
-    public ThemeLayout Layout { get; set; } = new();
+    [JsonIgnore(Condition = JsonIgnoreCondition.Never)] public ThemeLayout Layout { get; set; } = new();
     /// <summary>HTML border, corner and accent settings; native Windows chrome stays removed.</summary>
-    public NotificationFrame Frame { get; set; } = new();
+    [JsonIgnore(Condition = JsonIgnoreCondition.Never)] public NotificationFrame Frame { get; set; } = new();
     /// <summary>Optional default level applied when a new request supplies no Level.</summary>
     public NotificationLevel? DefaultLevel { get; set; }
 }
@@ -74,7 +74,7 @@ public enum BorderPattern
 public sealed record NotificationFrame
 {
     /// <summary>Independent border widths in CSS pixels; defaults to one on top/right/bottom and five on the left.</summary>
-    public BorderThickness Thickness { get; set; } = new();
+    [JsonIgnore(Condition = JsonIgnoreCondition.Never)] public BorderThickness Thickness { get; set; } = new();
     /// <summary>HTML corner radius in CSS pixels, initially 0.</summary>
     public double CornerRadius { get; set; } = 0;
     /// <summary>HTML border stroke pattern, initially Solid.</summary>
@@ -116,7 +116,7 @@ public sealed record ThemePalette
     /// <summary>Text foreground for accent-filled controls.</summary>
     public Color AccentText { get; set; } = ColorTranslator.FromHtml("#ffffff");
     /// <summary>Editable semantic color map. Missing level entries fall back to Accent.</summary>
-    public Dictionary<NotificationLevel, Color> Levels { get; set; } = new()
+    [JsonIgnore(Condition = JsonIgnoreCondition.Never)] public Dictionary<NotificationLevel, Color> Levels { get; set; } = new()
     {
         [NotificationLevel.Normal] = ColorTranslator.FromHtml("#939eac"), [NotificationLevel.Info] = ColorTranslator.FromHtml("#3478ed"), [NotificationLevel.Success] = ColorTranslator.FromHtml("#49b58c"),
         [NotificationLevel.Warning] = ColorTranslator.FromHtml("#d5aa4c"), [NotificationLevel.Error] = ColorTranslator.FromHtml("#e06b70"), [NotificationLevel.Urgent] = ColorTranslator.FromHtml("#e34c58"),

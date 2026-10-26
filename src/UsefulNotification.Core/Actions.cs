@@ -43,6 +43,7 @@ public sealed record OpenUriAction(Uri Target) : NotificationAction
     internal override bool External => true;
     internal override void Validate()
     {
+        ArgumentNullException.ThrowIfNull(Target);
         if (!Target.IsAbsoluteUri || !AppConstants.Actions.LinkSchemes.Contains(Target.Scheme)) throw new ArgumentException("Unsupported action URI.");
     }
     internal override Task ExecuteAsync(CancellationToken cancellationToken)

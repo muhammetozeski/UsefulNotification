@@ -48,7 +48,7 @@ public sealed record DailyRecurrence : NotificationRecurrence
 public sealed record WeeklyRecurrence(DayOfWeek[] Days) : NotificationRecurrence
 {
     /// <inheritdoc/>
-    public override void Validate() { if (Days.Any(day => !Enum.IsDefined(day))) throw new ArgumentException("Invalid weekday."); }
+    public override void Validate() { ArgumentNullException.ThrowIfNull(Days); if (Days.Any(day => !Enum.IsDefined(day))) throw new ArgumentException("Invalid weekday."); }
     /// <inheritdoc/>
     public override DateTimeOffset Next(DateTimeOffset anchor, DateTimeOffset after)
     {
@@ -64,7 +64,7 @@ public sealed record WeeklyRecurrence(DayOfWeek[] Days) : NotificationRecurrence
 public sealed record MonthlyRecurrence(int[] Days) : NotificationRecurrence
 {
     /// <inheritdoc/>
-    public override void Validate() { if (Days.Any(day => day is < 1 or > 31)) throw new ArgumentException("Month days must be between 1 and 31."); }
+    public override void Validate() { ArgumentNullException.ThrowIfNull(Days); if (Days.Any(day => day is < 1 or > 31)) throw new ArgumentException("Month days must be between 1 and 31."); }
     /// <inheritdoc/>
     public override DateTimeOffset Next(DateTimeOffset anchor, DateTimeOffset after)
     {

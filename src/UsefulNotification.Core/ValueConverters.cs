@@ -93,6 +93,7 @@ internal sealed class ProcessStartConverter(PortablePathContext? paths = null) :
     sealed record Definition(string FileName, string Arguments, string[] ArgumentList, string WorkingDirectory, bool UseShellExecute, bool CreateNoWindow, ProcessWindowStyle WindowStyle);
     public static void Validate(ProcessStartInfo start)
     {
+        ArgumentNullException.ThrowIfNull(start);
         ArgumentException.ThrowIfNullOrWhiteSpace(start.FileName);
         if (start.RedirectStandardInput || start.RedirectStandardOutput || start.RedirectStandardError || !string.IsNullOrEmpty(start.UserName) || !string.IsNullOrEmpty(start.Verb))
             throw new ArgumentException("Notification commands do not transfer credentials, redirected streams, or shell verbs.");

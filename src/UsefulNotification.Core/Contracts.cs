@@ -155,7 +155,7 @@ public sealed record NotificationRequest
     /// <summary>Optional positive snooze durations. Null uses the host choices; values are durations rather than minute counts.</summary>
     public TimeSpan[]? Snooze { get; set; }
     /// <summary>Declared action objects displayed as buttons. Defaults to an empty list; accepted requests own a serialized copy.</summary>
-    public List<NotificationAction> Actions { get; set; } = [];
+    [JsonIgnore(Condition = JsonIgnoreCondition.Never)] public List<NotificationAction> Actions { get; set; } = [];
     /// <summary>Optional progress content. Incomplete progress normally remains until acknowledgement.</summary>
     public ProgressContent? Progress { get; set; }
     /// <summary>Optional absolute image URI or local file reference. The host loads the image for the card.</summary>
@@ -163,11 +163,11 @@ public sealed record NotificationRequest
     /// <summary>Optional reply field; submitted text is returned in the occurrence result.</summary>
     public InputContent? Input { get; set; }
     /// <summary>Selectable items, initially empty. Results return selected item identities rather than labels.</summary>
-    public List<ChecklistItem> Checklist { get; set; } = [];
+    [JsonIgnore(Condition = JsonIgnoreCondition.Never)] public List<ChecklistItem> Checklist { get; set; } = [];
     /// <summary>Optional complete HTML card replacement. Null uses the standard renderer.</summary>
     public HtmlTemplateContent? Template { get; set; }
     /// <summary>Sender-defined template values, initially empty. The template renderer substitutes matching placeholders.</summary>
-    public Dictionary<string, string> Data { get; set; } = [];
+    [JsonIgnore(Condition = JsonIgnoreCondition.Never)] public Dictionary<string, string> Data { get; set; } = [];
     /// <summary>Optional existing named pipe receiving one JSON result after completion is persisted. The host makes a bounded best-effort connection.</summary>
     public string? CallbackPipe { get; set; }
     [JsonIgnore] internal NotificationKind Kind => Template is not null ? NotificationKind.Custom : Progress is not null ? NotificationKind.Progress : Image is not null ? NotificationKind.Image : Input is not null ? NotificationKind.Input : Checklist.Count > 0 ? NotificationKind.Checklist : Actions.Count > 0 ? NotificationKind.Choice : Schedule is not null ? NotificationKind.Reminder : NotificationKind.Text;
