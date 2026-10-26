@@ -113,4 +113,16 @@
   <s name="ToneSequence">Tone sequence</s>
   <s name="MoveUp">Move up</s>
   <s name="MoveDown">Move down</s>
+  <s name="HistoryPrevious">Previous</s>
+  <s name="HistoryNext">Next</s>
+  <s name="SystemLanguage">System language</s>
+  <s name="CommandUsage">notify.exe [title] [message] [options]</s>
+  <s name="CommandEmpty">No arguments sends an information notification.</s>
+  <s name="CommandDuration">Durations accept a number of seconds or .NET TimeSpan format.</s>
+  <s name="CommandValue">value</s>
+  <s name="UnknownOption">Unknown option: {0}</s>
+  <s name="MissingValue">Missing value: {0}</s>
+  <s name="PositionalLimit">Use quotes around a title or message that contains spaces.</s>
+  <s name="InvalidOptionValue">Invalid value for {0}: {1}</s>
+  <s name="RequestObjectRequired">Notification input must be a JSON object.</s>
 </strings>

@@ -1,18 +1,20 @@
 using System.Globalization;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using UsefulNotification;
+using UsefulNotification.Localization;
 
 return await CommandLine.ExecuteAsync(args);
 
-/// <summary>Parses the public command contract and uses the same request model as C# callers.</summary>
+/// <summary>Translates command-line text to wire requests; the host owns legacy name resolution.</summary>
 internal static class CommandLine
 {
-    /// <summary>Identifies a command option's actual request field or behavior.</summary>
-    enum Field { Title, Message, Source, Level, Kind, Priority, Theme, Sticky, Silent, Duration, At, After, Every, Recurrence, Id, Tag, Group, Progress, Image, Template, Input, Items, Actions, Sound, Json, Stdin, Wait, Help, Panel, List, Clear, Update, Dismiss, Snooze, Settings, Exit }
-    /// <summary>Describes one accepted command token and whether it consumes a value.</summary>
-    /// <param name="Name">Public token.</param>
-    /// <param name="Field">The request field or operation.</param>
-    /// <param name="Value">Whether a following value is required.</param>
+    /// <summary>Identifies an argument's field or command behavior at the text boundary.</summary>
+    enum Field { Title, Message, Source, Level, Kind, Priority, Theme, Sticky, Silent, Duration, At, After, Every, Recurrence, Id, Tag, Group, Progress, Image, Template, Input, Items, Actions, Sound, Json, Stdin, Wait, Help, Panel, List, Get, Clear, Update, Dismiss, Snooze, Settings, Exit }
+    /// <summary>Describes a public token and whether it consumes the next argument.</summary>
+    /// <param name="Name">The accepted command or option spelling.</param>
+    /// <param name="Field">The field or behavior selected by this token.</param>
+    /// <param name="Value">Whether a following argument is required.</param>
     record Option(string Name, Field Field, bool Value = false);
     static List<Option> Options =
     [
@@ -23,97 +25,151 @@ internal static class CommandLine
         new("--tag", Field.Tag, true), new("--group", Field.Group, true), new("--progress", Field.Progress, true), new("--image", Field.Image, true),
         new("--template", Field.Template, true), new("--input", Field.Input), new("--items", Field.Items, true), new("--actions", Field.Actions, true),
         new("--sound", Field.Sound, true), new("--json", Field.Json, true), new("--stdin", Field.Stdin), new("--wait", Field.Wait), new("--help", Field.Help),
-        new("panel", Field.Panel), new("list", Field.List), new("clear", Field.Clear), new("update", Field.Update), new("dismiss", Field.Dismiss),
-        new("snooze", Field.Snooze), new("settings", Field.Settings), new("exit", Field.Exit)
+        new("panel", Field.Panel), new("list", Field.List), new("get", Field.Get), new("clear", Field.Clear), new("update", Field.Update),
+        new("dismiss", Field.Dismiss), new("snooze", Field.Snooze), new("settings", Field.Settings), new("exit", Field.Exit)
     ];
 
-    /// <summary>Sends an empty or detailed notification, reports machine-readable acceptance, and optionally waits for acknowledgement.</summary>
-    /// <param name="arguments">Command tokens; no arguments means an empty information notification.</param>
-    /// <returns>Zero for accepted work, one for rejected work, two for invalid arguments.</returns>
+    /// <summary>Sends an empty notification, a complete request or a partial update, and optionally waits for its exact display result.</summary>
+    /// <param name="arguments">Command tokens; quoted option values are consumed once even when equal to another token.</param>
+    /// <returns>Zero for accepted work, one for rejected work and two for invalid arguments or execution failure.</returns>
     public static async Task<int> ExecuteAsync(string[] arguments)
     {
+        using var cancellation = new CancellationTokenSource();
+        ConsoleCancelEventHandler cancel = (_, eventArgs) => { eventArgs.Cancel = true; cancellation.Cancel(); };
+        Console.CancelKeyPress += cancel;
         try
         {
-            var request = new NotificationRequest { Source = SenderIdentity.Parent() };
+            if (!ApplicationServices.Initialize().Succeeded) { Console.Error.WriteLine(Strings.OperationFailed); return 1; }
+            var request = new JsonObject(new JsonNodeOptions { PropertyNameCaseInsensitive = true });
             var operation = NotificationOperation.Send;
-            bool wait = false;
+            bool wait = false, settingsMenu = false;
             List<string> positional = [];
             TimeSpan? delay = null;
-            foreach (var pair in arguments.Select((argument, index) => (argument, index)))
+            Guid? selectedId = null;
+            for (int index = 0; index < arguments.Length; index++)
             {
-                if (pair.index > 0 && Options.Any(option => option.Name == arguments[pair.index - 1] && option.Value)) continue;
-                Option? option = Options.FirstOrDefault(candidate => candidate.Name.Equals(pair.argument, StringComparison.OrdinalIgnoreCase));
+                Option? option = Options.FirstOrDefault(candidate => candidate.Name.Equals(arguments[index], StringComparison.OrdinalIgnoreCase));
                 if (option is null)
                 {
-                    if (pair.argument.StartsWith('-')) throw new ArgumentException($"Unknown option: {pair.argument}");
-                    positional.Add(pair.argument); continue;
+                    if (arguments[index].StartsWith('-')) throw new ArgumentException(string.Format(CultureInfo.CurrentCulture, Strings.UnknownOption, arguments[index]));
+                    positional.Add(arguments[index]);
+                    continue;
                 }
-                string value = option.Value ? pair.index + 1 < arguments.Length ? arguments[pair.index + 1] : throw new ArgumentException($"Missing value: {option.Name}") : string.Empty;
-                switch (option.Field)
+                string value = option.Value ? ++index < arguments.Length ? arguments[index] : throw new ArgumentException(string.Format(CultureInfo.CurrentCulture, Strings.MissingValue, option.Name)) : string.Empty;
+                try
                 {
-                    case Field.Help:
-                        Console.WriteLine("UsefulNotification.Command [title] [message] [options]\nNo arguments sends an information notification. Durations accept .NET TimeSpan format or a number of seconds.");
-                        foreach (Option documented in Options) Console.WriteLine($"  {documented.Name}{(documented.Value ? " <value>" : string.Empty)}");
-                        return 0;
-                    case Field.Title: request.Title = value; break;
-                    case Field.Message: request.Message = value; break;
-                    case Field.Source: request.Source = value; break;
-                    case Field.Level: request.Level = Enum.Parse<NotificationLevel>(value, true); break;
-                    case Field.Kind: request.Kind = Enum.Parse<NotificationKind>(value, true); break;
-                    case Field.Priority: request.Priority = Enum.Parse<NotificationPriority>(value, true); break;
-                    case Field.Theme: request.Theme = value; break;
-                    case Field.Sticky: request.Sticky = true; break;
-                    case Field.Silent: request.Silent = true; break;
-                    case Field.Duration: request.Duration = ParseDuration(value); break;
-                    case Field.At: request.Schedule = (request.Schedule ?? new()) with { At = DateTimeOffset.Parse(value, CultureInfo.CurrentCulture) }; break;
-                    case Field.After: request.Schedule = (request.Schedule ?? new()) with { After = ParseDuration(value) }; delay = ParseDuration(value); break;
-                    case Field.Every: request.Schedule = (request.Schedule ?? new()) with { Every = ParseDuration(value), Recurrence = RecurrencePattern.Interval }; break;
-                    case Field.Recurrence: request.Schedule = (request.Schedule ?? new()) with { Recurrence = Enum.Parse<RecurrencePattern>(value, true) }; break;
-                    case Field.Id: request.Id = Guid.Parse(value); break;
-                    case Field.Tag: request.Tag = value; break;
-                    case Field.Group: request.Group = value; break;
-                    case Field.Progress: request.Kind = NotificationKind.Progress; request.Progress = new() { Value = double.Parse(value, CultureInfo.InvariantCulture) }; break;
-                    case Field.Image: request.Kind = NotificationKind.Image; request.Image = value; break;
-                    case Field.Template: request.Kind = NotificationKind.Custom; request.Template = value; break;
-                    case Field.Input: request.Kind = NotificationKind.Input; request.Input = new(); request.Sticky = true; break;
-                    case Field.Items: request.Kind = NotificationKind.Checklist; request.Checklist = value.Split('|').Select(text => new ChecklistItem { Id = text, Text = text }).ToList(); break;
-                    case Field.Actions: request.Kind = NotificationKind.Choice; request.Actions = value.Split('|').Select(label => new NotificationAction { Id = label, Label = label }).ToList(); break;
-                    case Field.Sound: request.Sound = new() { AudioFile = value }; break;
-                    case Field.Json: request = JsonSerializer.Deserialize<NotificationRequest>(File.ReadAllText(value), AppConstants.Json) ?? new(); request.Source ??= SenderIdentity.Parent(); break;
-                    case Field.Stdin: request = JsonSerializer.Deserialize<NotificationRequest>(await Console.In.ReadToEndAsync(), AppConstants.Json) ?? new(); request.Source ??= SenderIdentity.Parent(); break;
-                    case Field.Wait: wait = true; break;
-                    case Field.Panel: operation = NotificationOperation.ShowPanel; break;
-                    case Field.List: operation = NotificationOperation.List; break;
-                    case Field.Clear: operation = NotificationOperation.Clear; break;
-                    case Field.Update: operation = NotificationOperation.Update; break;
-                    case Field.Dismiss: operation = NotificationOperation.Dismiss; break;
-                    case Field.Snooze: operation = NotificationOperation.Snooze; break;
-                    case Field.Exit: operation = NotificationOperation.Shutdown; break;
-                    case Field.Settings:
-                        if (!ApplicationServices.Initialize().Succeeded) return 1;
-                        SettingsManager.OpenSettingsMenu(AppConstants.ConfigFileName);
-                        await NotificationClient.SendAsync(operation: NotificationOperation.ReloadSettings);
-                        return 0;
+                    switch (option.Field)
+                    {
+                        case Field.Help:
+                            Console.WriteLine($"{Strings.CommandUsage}\n{Strings.CommandEmpty}\n{Strings.CommandDuration}");
+                            foreach (Option documented in Options) Console.WriteLine($"  {documented.Name}{(documented.Value ? $" <{Strings.CommandValue}>" : string.Empty)}");
+                            return 0;
+                        case Field.Title: request["title"] = value; break;
+                        case Field.Message: request["message"] = value; break;
+                        case Field.Source: request["source"] = value; break;
+                        case Field.Level: request["level"] = EnumText<NotificationLevel>(value); break;
+                        case Field.Kind: request["kind"] = EnumText<NotificationKind>(value); break;
+                        case Field.Priority: request["priority"] = EnumText<NotificationPriority>(value); break;
+                        case Field.Theme: request["theme"] = value; break;
+                        case Field.Sticky: request["sticky"] = true; break;
+                        case Field.Silent: request["silent"] = true; break;
+                        case Field.Duration: request["duration"] = ParseDuration(value).ToString(); break;
+                        case Field.At: Content("schedule")["at"] = JsonValue.Create(DateTimeOffset.Parse(value, CultureInfo.CurrentCulture)); break;
+                        case Field.After: delay = ParseDuration(value); Content("schedule")["after"] = delay.Value.ToString(); break;
+                        case Field.Every:
+                            Content("schedule")["every"] = ParseDuration(value).ToString();
+                            Content("schedule")["recurrence"] = "interval";
+                            break;
+                        case Field.Recurrence: Content("schedule")["recurrence"] = value; break;
+                        case Field.Id: selectedId = Guid.Parse(value); break;
+                        case Field.Tag: request["tag"] = value; break;
+                        case Field.Group: request["group"] = value; break;
+                        case Field.Progress: Content("progress")["value"] = double.Parse(value, CultureInfo.InvariantCulture); break;
+                        case Field.Image: request["image"] = value; break;
+                        case Field.Template: request["template"] = value; break;
+                        case Field.Input: request["input"] = new JsonObject(); request["sticky"] = true; break;
+                        case Field.Items:
+                            request["checklist"] = new JsonArray(value.Split('|', StringSplitOptions.RemoveEmptyEntries).Select(text => (JsonNode)new JsonObject { ["id"] = text, ["text"] = text }).ToArray());
+                            break;
+                        case Field.Actions:
+                            request["actions"] = new JsonArray(value.Split('|', StringSplitOptions.RemoveEmptyEntries).Select(label => (JsonNode)new JsonObject { ["id"] = label, ["label"] = label, ["kind"] = "dismiss" }).ToArray());
+                            break;
+                        case Field.Sound: request["sound"] = new JsonObject { ["audioFile"] = Path.GetFullPath(value) }; break;
+                        case Field.Json: request = ReadObject(await File.ReadAllTextAsync(value, cancellation.Token)); break;
+                        case Field.Stdin: request = ReadObject(await Console.In.ReadToEndAsync(cancellation.Token)); break;
+                        case Field.Wait: wait = true; break;
+                        case Field.Panel: operation = NotificationOperation.ShowPanel; break;
+                        case Field.List: operation = NotificationOperation.List; break;
+                        case Field.Get: operation = NotificationOperation.Get; break;
+                        case Field.Clear: operation = NotificationOperation.Clear; break;
+                        case Field.Update: operation = NotificationOperation.Update; break;
+                        case Field.Dismiss: operation = NotificationOperation.Dismiss; break;
+                        case Field.Snooze: operation = NotificationOperation.Snooze; break;
+                        case Field.Exit: operation = NotificationOperation.Shutdown; break;
+                        case Field.Settings: settingsMenu = true; operation = NotificationOperation.ReloadSettings; break;
+                    }
+                }
+                catch (Exception error) when (error is FormatException or OverflowException or JsonException or ArgumentException)
+                {
+                    throw new ArgumentException(string.Format(CultureInfo.CurrentCulture, Strings.InvalidOptionValue, option.Name, value), error);
                 }
             }
-            if (positional.Count > 2) throw new ArgumentException("Use quotes around a title or message that contains spaces.");
-            if (positional.Count > 0) request.Title = positional[0];
-            if (positional.Count > 1) request.Message = positional[1];
-            NotificationResponse response = await NotificationClient.SendAsync(request, operation, request.Id, delay);
-            Console.WriteLine(JsonSerializer.Serialize(response, AppConstants.Json));
-            if (wait && response.Accepted && response.Id is { } id) Console.WriteLine(JsonSerializer.Serialize(await NotificationClient.WaitAsync(id), AppConstants.Json));
+            if (positional.Count > 2) throw new ArgumentException(Strings.PositionalLimit);
+            if (positional.Count > 0) request["title"] = positional[0];
+            if (positional.Count > 1) request["message"] = positional[1];
+            Guid? id = selectedId ?? request["id"]?.Deserialize<Guid>(AppConstants.Json);
+            if (operation is NotificationOperation.Update or NotificationOperation.Dismiss or NotificationOperation.Snooze or NotificationOperation.Get && id is null) throw new ArgumentException(string.Format(CultureInfo.CurrentCulture, Strings.MissingValue, "--id"));
+            if (settingsMenu) SettingsManager.OpenSettingsMenu(AppConstants.ConfigFileName);
+            if (operation == NotificationOperation.Send)
+            {
+                request["source"] ??= SenderIdentity.Parent();
+                id ??= Guid.NewGuid();
+                request["id"] = id.Value.ToString();
+            }
+            var command = new JsonObject { ["operation"] = JsonSerializer.SerializeToNode(operation, AppConstants.Json) };
+            if (id is { } identity) command["id"] = identity.ToString();
+            if (operation is NotificationOperation.Send or NotificationOperation.Update) command[operation == NotificationOperation.Update ? "update" : "notification"] = request;
+            if (operation == NotificationOperation.Snooze && delay is { } snooze) command["delay"] = snooze.ToString();
+            NotificationReceipt response = await NotificationClient.SendWireAsync(command.ToJsonString(AppConstants.WireJson), operation, cancellation.Token);
+            Console.WriteLine(NotificationProtocol.WriteResponse(response));
+            if (wait && response.Accepted && response.OccurrenceId is not null)
+                Console.WriteLine(JsonSerializer.Serialize(await NotificationClient.WaitAsync(response, cancellationToken: cancellation.Token), AppConstants.WireJson));
             return response.Accepted ? 0 : 1;
+
+            /// <summary>Reuses or creates the nested request object being explicitly edited by an option.</summary>
+            /// <param name="name">The wire field owned by that content object.</param>
+            /// <returns>The mutable nested object; unrelated fields remain intact.</returns>
+            JsonObject Content(string name)
+            {
+                if (request[name] is JsonObject content) return content;
+                var created = new JsonObject();
+                request[name] = created;
+                return created;
+            }
         }
         catch (Exception error)
         {
             ExceptionBoundary.LogSafely(error.ToString());
-            Console.Error.WriteLine(JsonSerializer.Serialize(new NotificationResponse { Error = error.Message }, AppConstants.Json));
+            var failure = new NotificationReceipt { Failure = new(error is ArgumentException ? NotificationError.InvalidRequest : NotificationError.OperationFailed, error is ArgumentException ? error.Message : Strings.OperationFailed) };
+            Console.Error.WriteLine(JsonSerializer.Serialize(failure, AppConstants.WireJson));
             return 2;
         }
+        finally { Console.CancelKeyPress -= cancel; }
     }
+
+    /// <summary>Reads JSON request or patch text without materializing model defaults or dropping explicit null fields.</summary>
+    /// <param name="text">A complete JSON object.</param>
+    /// <returns>The independently owned object, preserving property presence.</returns>
+    static JsonObject ReadObject(string text) => JsonNode.Parse(text, new JsonNodeOptions { PropertyNameCaseInsensitive = true }) as JsonObject ?? throw new ArgumentException(Strings.RequestObjectRequired);
+
+    /// <summary>Validates a finite command-line enum and returns its canonical wire spelling.</summary>
+    /// <typeparam name="T">The actual finite contract enum.</typeparam>
+    /// <param name="value">A case-insensitive named enum value.</param>
+    /// <returns>The canonical member name; undefined numeric values are rejected.</returns>
+    static string EnumText<T>(string value) where T : struct, Enum => Enum.TryParse<T>(value, true, out var parsed) && Enum.IsDefined(parsed) ? parsed.ToString() : throw new FormatException(value);
 
     /// <summary>Parses numeric seconds or the standard .NET duration representation.</summary>
     /// <param name="value">Duration text.</param>
-    /// <returns>The represented duration.</returns>
+    /// <returns>The represented duration, with overflow rejected.</returns>
     static TimeSpan ParseDuration(string value) => double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out double seconds) ? TimeSpan.FromSeconds(seconds) : TimeSpan.Parse(value, CultureInfo.InvariantCulture);
 }

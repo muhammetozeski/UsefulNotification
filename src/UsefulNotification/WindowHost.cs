@@ -25,7 +25,6 @@ internal sealed class WindowHost
     MauiWindow PanelWindow = null!;
     TaskbarIcon? Tray;
     SUBCLASSPROC? WindowProcedure;
-    IDispatcherTimer? Scheduler;
     readonly SemaphoreSlim SoundGate = new(1);
     bool Exiting;
     bool PanelWanted = !Environment.GetCommandLineArgs().Contains(AppConstants.Product.BackgroundArgument);
@@ -35,6 +34,7 @@ internal sealed class WindowHost
     int ToastHeight = AppConstants.Windows.Toast.Height;
     static NativeAppearance Chrome = new();
     static StartupRegistration Startup = new();
+    public bool IsPanelVisible => PanelWanted;
     public double ToastContentScale => AppConstants.Windows.ToastSizing == DisplaySizing.PhysicalPixels && Toast is not null
         ? PInvoke.USER_DEFAULT_SCREEN_DPI / (double)PInvoke.GetDpiForWindow(Handle(Toast)) : 1;
 
@@ -88,18 +88,13 @@ internal sealed class WindowHost
         App.Hub.PanelRequested += () => MainThread.BeginInvokeOnMainThread(() => ShowPanel());
         App.Hub.ShutdownRequested += () => MainThread.BeginInvokeOnMainThread(Exit);
         App.Hub.SettingsReloaded += () => MainThread.BeginInvokeOnMainThread(() => RunSafely(() => { InstallHotkey(); ApplyStartup(); }));
-        App.Hub.SoundRequested += entry => _ = PlaySoundAsync(entry.Request.Sound);
+        App.Hub.SoundRequested += entry => App.Hub.RunBackground(token => PlaySoundAsync(entry.Request.Sound, token));
         App.Hub.DeliveryIssue += entry =>
         {
             Log($"Delivery not confirmed; id={entry.Id}; source={entry.Request.Source}", PrintToConsole: false, isRun: IsLogEnabled);
-            MainThread.BeginInvokeOnMainThread(() => ShowPanel());
-            PInvoke.MessageBeep(MESSAGEBOX_STYLE.MB_ICONWARNING);
+            MainThread.BeginInvokeOnMainThread(() => { if (Tray is not null) Tray.ToolTipText = $"{AppConstants.Product.Name}: {Localization.Strings.Failed}"; });
         };
-        App.Hub.ServerTask = Task.Run(() => RunSafelyAsync(async token => await App.Hub.ListenAsync()));
-        Scheduler = Application.Current!.Dispatcher.CreateTimer();
-        Scheduler.Interval = AppConstants.Notifications.SchedulerInterval;
-        Scheduler.Tick += (_, _) => RunSafely(App.Hub.Tick);
-        Scheduler.Start();
+        App.Hub.Start();
         MauiWindow toast = App.CreateSurface(true);
         toast.Created += (_, _) =>
         {
@@ -110,7 +105,7 @@ internal sealed class WindowHost
             Toast.AppWindow.Hide();
             Refresh();
         };
-        Application.Current.OpenWindow(toast);
+        Application.Current!.OpenWindow(toast);
         if (!PanelWanted) Panel.AppWindow.Hide();
     }
 
@@ -119,8 +114,9 @@ internal sealed class WindowHost
     public void ShowPanel(bool show = true)
     {
         PanelWanted = show;
-        if (show) { Panel.AppWindow.Show(); Panel.Activate(); }
-        else { App.Hub.SavePreferences(); Panel.AppWindow.Hide(); }
+        if (!show) { App.Hub.SavePreferences(); Panel.AppWindow.Hide(); }
+        App.Hub.InvalidateViews();
+        if (show && PanelPrepared) { Panel.AppWindow.Show(); Panel.Activate(); }
     }
 
     /// <summary>Restacks the active notifications on the selected monitor.</summary>
@@ -159,20 +155,22 @@ internal sealed class WindowHost
         else
         {
             if (!PanelPrepared) { Configure(Panel, false); PanelPrepared = true; }
-            if (!PanelWanted) Panel.AppWindow.Hide();
+            if (PanelWanted) Panel.AppWindow.Show(); else Panel.AppWindow.Hide();
         }
     }
 
     /// <summary>Checks native visibility and screen intersection before recording rendered cards as delivered.</summary>
-    /// <param name="ids">Rendered notification identities.</param>
-    /// <param name="toast">Which native surface rendered the cards.</param>
-    public void ConfirmRendered(IEnumerable<Guid> ids, bool toast)
+    /// <param name="receipts">Card viewport evidence for the current toast content revision.</param>
+    public void ConfirmRendered(RenderReceipt[] receipts)
     {
-        NativeWindow? native = toast ? Toast : Panel;
-        if (native is null || !PInvoke.IsWindowVisible(Handle(native)) || !PInvoke.GetWindowRect(Handle(native), out RECT bounds)) return;
+        NativeWindow? native = Toast;
+        if (native is null) return;
+        bool visible = PInvoke.IsWindowVisible(Handle(native));
         RectInt32 work = WorkArea(native);
-        if (bounds.right <= work.X || bounds.bottom <= work.Y || bounds.left >= work.X + work.Width || bounds.top >= work.Y + work.Height) return;
-        App.Hub.ConfirmVisible(ids);
+        if (visible && PInvoke.GetWindowRect(Handle(native), out RECT bounds))
+            visible = bounds.right > work.X && bounds.bottom > work.Y && bounds.left < work.X + work.Width && bounds.top < work.Y + work.Height;
+        else visible = false;
+        App.Hub.ConfirmVisible(receipts.Select(receipt => receipt with { Visible = visible && receipt.Visible }));
     }
 
     /// <summary>Begins the normal Windows move operation from the HTML header.</summary>
@@ -188,23 +186,24 @@ internal sealed class WindowHost
     /// <summary>Plays a local audio file or tone sequence, with a system-sound fallback after an actual failure.</summary>
     /// <param name="pattern">Optional sequence; null resolves the user's selected sound.</param>
     /// <returns>The complete sound operation.</returns>
-    public async Task PlaySoundAsync(SoundPattern? pattern = null)
+    public async Task PlaySoundAsync(SoundPattern? pattern = null, CancellationToken cancellationToken = default)
     {
+        using var stopping = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, App.Hub.Lifetime);
         await RunSafelyAsync(async token =>
         {
             await SoundGate.WaitAsync(token);
             try
             {
-                pattern ??= App.Hub.Preferences.Sounds.FirstOrDefault(sound => sound.Name == App.Hub.Preferences.SelectedSound) ?? AppConstants.Notifications.Sound;
+                pattern = NotificationProtocol.Copy(pattern ?? App.Hub.Preferences.SelectedSound ?? AppConstants.Notifications.Sound);
                 try
                 {
-                    if (!string.IsNullOrWhiteSpace(pattern.AudioFile))
+                    if (pattern.AudioFile is { } audio)
                     {
                         using var player = new MediaPlayer();
                         var ended = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                         player.MediaEnded += (_, _) => ended.TrySetResult();
                         player.MediaFailed += (_, args) => ended.TrySetException(new IOException(args.ErrorMessage));
-                        player.Source = MediaSource.CreateFromUri(new Uri(Path.GetFullPath(pattern.AudioFile, AppPaths.Root)));
+                        player.Source = MediaSource.CreateFromUri(new Uri(audio.FullName));
                         player.Play();
                         await ended.Task.WaitAsync(token);
                     }
@@ -223,19 +222,25 @@ internal sealed class WindowHost
                 }
             }
             finally { SoundGate.Release(); }
-        });
+        }, stopping.Token);
     }
 
     /// <summary>Stops the listener, saves placement, removes the tray icon, and closes the process.</summary>
-    public void Exit()
+    public async void Exit()
     {
+        if (Exiting) return;
         Exiting = true;
-        App.Hub.SavePreferences();
-        Scheduler?.Stop();
-        App.Hub.Dispose();
-        Tray?.Dispose();
-        PInvoke.UnregisterHotKey(Handle(Panel), AppConstants.Windows.Hotkey.Id);
-        Application.Current!.Quit();
+        await RunSafelyAsync(async token =>
+        {
+            try { App.Hub.SavePreferences(); }
+            finally
+            {
+                await App.Hub.DisposeAsync();
+                Tray?.Dispose();
+                PInvoke.UnregisterHotKey(Handle(Panel), AppConstants.Windows.Hotkey.Id);
+                Application.Current!.Quit();
+            }
+        });
     }
 
     /// <summary>Configures the chrome and extended styles once for a native HTML surface.</summary>
@@ -291,7 +296,11 @@ internal sealed class WindowHost
         var shortcut = AppConstants.Windows.Hotkey;
         HWND handle = Handle(Panel);
         PInvoke.UnregisterHotKey(handle, shortcut.Id);
-        if (Settings.GlobalHotkey.Value && !PInvoke.RegisterHotKey(handle, shortcut.Id, HOT_KEY_MODIFIERS.MOD_CONTROL | HOT_KEY_MODIFIERS.MOD_ALT | HOT_KEY_MODIFIERS.MOD_NOREPEAT, (uint)VIRTUAL_KEY.VK_N))
+        HOT_KEY_MODIFIERS modifiers = HOT_KEY_MODIFIERS.MOD_NOREPEAT;
+        if (shortcut.Modifiers.HasFlag(ConsoleModifiers.Control)) modifiers |= HOT_KEY_MODIFIERS.MOD_CONTROL;
+        if (shortcut.Modifiers.HasFlag(ConsoleModifiers.Alt)) modifiers |= HOT_KEY_MODIFIERS.MOD_ALT;
+        if (shortcut.Modifiers.HasFlag(ConsoleModifiers.Shift)) modifiers |= HOT_KEY_MODIFIERS.MOD_SHIFT;
+        if (Settings.GlobalHotkey.Value && !PInvoke.RegisterHotKey(handle, shortcut.Id, modifiers, (uint)shortcut.Key))
             Log("Panel shortcut could not be registered; another application may own it.", PrintToConsole: false, isRun: IsLogEnabled);
     }
 

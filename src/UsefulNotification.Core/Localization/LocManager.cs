@@ -15,7 +15,7 @@ namespace UsefulNotification.Localization;
 /// Dropping another <c>lang.&lt;code&gt;.xml</c> into the configuration folder is enough to add a
 /// language; it shows up in the picker without a code change.
 /// </summary>
-public static class LocManager
+internal static class LocManager
 {
     internal const bool IsLogEnabled = true;
     public const string SystemLanguage = "system";

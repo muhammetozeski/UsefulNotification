@@ -17,14 +17,14 @@ internal static class PortableStore
     {
         string path = Path.Combine(AppPaths.UserData, name);
         if (!File.Exists(path)) return fallback;
-        try { return JsonSerializer.Deserialize<T>(File.ReadAllText(path), AppConstants.Json) ?? throw new InvalidDataException(path); }
+        try { return NotificationProtocol.ReadStored<T>(File.ReadAllText(path)) ?? throw new InvalidDataException(path); }
         catch (Exception first) when (first is JsonException or IOException or InvalidDataException)
         {
             Log($"Recovery requested; path={path}; error={first}", PrintToConsole: false, isRun: IsLogEnabled);
             try
             {
-                T restored = JsonSerializer.Deserialize<T>(File.ReadAllText(path + AppConstants.Storage.BackupExtension), AppConstants.Json) ?? throw new InvalidDataException(path);
-                File.Copy(path, path + DateTimeOffset.Now.ToUnixTimeMilliseconds() + ".unreadable", true);
+                T restored = NotificationProtocol.ReadStored<T>(File.ReadAllText(path + AppConstants.Storage.BackupExtension)) ?? throw new InvalidDataException(path);
+                File.Copy(path, path + DateTimeOffset.Now.ToUnixTimeMilliseconds() + AppConstants.Storage.UnreadableExtension, true);
                 Write(name, restored);
                 return restored;
             }

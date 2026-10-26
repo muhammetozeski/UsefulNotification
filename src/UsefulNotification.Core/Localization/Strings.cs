@@ -1,6 +1,18 @@
 namespace UsefulNotification.Localization;
 /// <summary>Contains localized interface text loaded by LocManager.</summary>
 internal static class Strings {
+    public static string HistoryPrevious = "Önceki";
+    public static string HistoryNext = "Sonraki";
+    public static string SystemLanguage = "Sistem dili";
+    public static string CommandUsage = "notify.exe [başlık] [mesaj] [seçenekler]";
+    public static string CommandEmpty = "Parametresiz çağrı bilgi bildirimi gönderir.";
+    public static string CommandDuration = "Süreler saniye sayısı veya .NET TimeSpan biçiminde yazılır.";
+    public static string CommandValue = "değer";
+    public static string UnknownOption = "Bilinmeyen seçenek: {0}";
+    public static string MissingValue = "Değer eksik: {0}";
+    public static string InvalidOptionValue = "{0} için geçersiz değer: {1}";
+    public static string RequestObjectRequired = "Bildirim girdisi bir JSON nesnesi olmalıdır.";
+    public static string PositionalLimit = "Boşluk içeren başlık ve mesajları tırnak içine alın.";
     public static string StartWithWindows = "Windows ile başlat";
     public static string Manual = "Elle";
     public static string AppTitle = "UsefulNotification";

@@ -11,7 +11,7 @@ public partial class App : MauiWinUIApplication
         if (!first)
         {
             if (Environment.GetCommandLineArgs().Contains(AppConstants.Product.BackgroundArgument)) { Environment.Exit(0); return; }
-            var result = RunSafely(() => NotificationClient.SendAsync(operation: NotificationOperation.ShowPanel, startApplication: false).GetAwaiter().GetResult());
+            var result = RunSafely(() => NotificationClient.ExecuteAsync(new() { Operation = NotificationOperation.ShowPanel }, new() { StartApplication = false }).GetAwaiter().GetResult());
             Environment.Exit(result.Succeeded ? 0 : 1);
             return;
         }

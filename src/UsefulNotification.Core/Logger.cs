@@ -1,7 +1,7 @@
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 namespace UsefulNotification;
-public static class Logger
+internal static class Logger
 {
     internal const bool IsLogEnabled = true;
     /// <summary> enable or disable logging by changing this </summary>

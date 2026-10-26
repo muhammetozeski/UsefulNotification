@@ -7,7 +7,7 @@ using Polly.Timeout;
 namespace UsefulNotification;
 
 /// <summary>Owns the policy objects used by transport, storage, scheduling, and rendering.</summary>
-public static class AppConstants
+internal static class AppConstants
 {
     public static ProductOptions Product = new();
     public static StorageOptions Storage = new();
@@ -16,7 +16,8 @@ public static class AppConstants
     public static WindowOptions Windows = new();
     public static RenderMemoryOptions RenderMemory = new();
     public static HtmlTemplateOptions HtmlTemplates = new();
-    public static JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true, Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) } };
+    public static ActionPolicy Actions = new();
+    public static JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true, AllowOutOfOrderMetadataProperties = true, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull, Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase), new NotificationThemeConverter(), new FileInfoConverter(), new ColorConverter(), new ProcessStartConverter(), new ChangeConverterFactory() } };
     public static JsonSerializerOptions WireJson = new(Json) { WriteIndented = false };
     public static RetryStrategyOptions Retry = new()
     {
@@ -28,17 +29,8 @@ public static class AppConstants
     public static string AppTitle => Product.Name;
     public static string ConfigFileName => Path.Combine(AppPaths.UserData, Storage.SettingsFile);
 }
-/// <summary>Names the product and executable payloads.</summary>
-public sealed class ProductOptions
-{
-    public string Name { get; set; } = "UsefulNotification";
-    public string Executable { get; set; } = "UsefulNotification.exe";
-    public string CommandExecutable { get; set; } = "notify.exe";
-    public string Icon { get; set; } = "app.ico";
-    public string BackgroundArgument { get; set; } = "--background";
-}
 /// <summary>Names the files owned by the portable application.</summary>
-public sealed class StorageOptions
+internal sealed class StorageOptions
 {
     public string SettingsFile { get; set; } = "settings.txt";
     public string HistoryFile { get; set; } = "notifications.json";
@@ -49,12 +41,14 @@ public sealed class StorageOptions
     public string BrowserCacheEnvironmentVariable { get; set; } = "WEBVIEW2_USER_DATA_FOLDER";
     public string BackupExtension { get; set; } = ".bak";
     public string TemporaryExtension { get; set; } = ".pending";
+    public string UnreadableExtension { get; set; } = ".unreadable";
     public int HistoryCapacity { get; set; } = 2000;
+    public int HistoryPageSize { get; set; } = 40;
 }
 /// <summary>Configures the local request channel and message budgets.</summary>
-public sealed class TransportOptions
+internal sealed class TransportOptions
 {
-    public string? ApplicationPath { get; set; }
+    public FileInfo? Application { get; set; }
     public System.Text.Encoding Encoding { get; set; } = new System.Text.UTF8Encoding(false);
     public string PipeName { get; set; } = "UsefulNotification.v1";
     public string MutexName { get; set; } = "Local\\UsefulNotification.v1";
@@ -64,31 +58,27 @@ public sealed class TransportOptions
     public int MaximumMessageCharacters { get; set; } = 1024 * 1024;
 }
 /// <summary>Supplies complete behavior when a sender omits notification options.</summary>
-public sealed class NotificationDefaults
+internal sealed class NotificationDefaults
 {
+    /// <summary>Resolves a sender lifetime or the content-dependent default used for actual delivery and updates.</summary>
+    public NotificationLifetime ResolveLifetime(NotificationRequest request) => request.Lifetime ??
+        (request.Schedule is not null || request.Input is not null || request.Actions.Count > 0 || request.Checklist.Count > 0 || request.Progress is { } progress && (progress.Value is null || progress.Value < progress.Maximum)
+            ? NotificationLifetimes.UntilAcknowledged : NotificationLifetimes.Default);
     /// <summary>Resolves a notification's own snooze choices or the shared fallback choices.</summary>
     /// <param name="request">Optional notification-specific options.</param>
     /// <returns>The effective nonempty snooze choices.</returns>
     public TimeSpan[] ResolveSnooze(NotificationRequest? request = null) => request?.Snooze is { Length: > 0 } choices ? choices : Snooze;
-    public TimeSpan Lifetime { get; set; } = TimeSpan.FromSeconds(8);
     public TimeSpan SchedulerInterval { get; set; } = TimeSpan.FromSeconds(1);
-    public TimeSpan SupervisorInterval { get; set; } = TimeSpan.FromSeconds(5);
     public TimeSpan DeliveryDeadline { get; set; } = TimeSpan.FromSeconds(15);
     public TimeSpan[] Snooze { get; set; } = [TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(10), TimeSpan.FromMinutes(15), TimeSpan.FromMinutes(30), TimeSpan.FromHours(1)];
     public TimeSpan[] QuickDelays { get; set; } = [TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(15), TimeSpan.FromMinutes(30), TimeSpan.FromHours(1)];
     public string TimeFormat { get; set; } = "yyyy.MM.dd HH.mm.ss";
     public NotificationLevel Level { get; set; } = NotificationLevel.Info;
     public int MaximumVisible { get; set; } = 3;
-    public SoundPattern Sound { get; set; } = new() { Name = "Chime Up", Steps = [new(900, TimeSpan.FromMilliseconds(160), TimeSpan.FromMilliseconds(60)), new(1200, TimeSpan.FromMilliseconds(160), TimeSpan.FromMilliseconds(60)), new(1500, TimeSpan.FromMilliseconds(300), TimeSpan.Zero)] };
-    public List<SoundPattern> SoundPresets { get; set; } =
-    [
-        new() { Name = "Dual Ping", Steps = [new(1050, TimeSpan.FromMilliseconds(150), TimeSpan.FromMilliseconds(100)), new(1050, TimeSpan.FromMilliseconds(150), TimeSpan.Zero)] },
-        new() { Name = "High Urgency", Steps = [new(1600, TimeSpan.FromMilliseconds(120), TimeSpan.FromMilliseconds(70)), new(1200, TimeSpan.FromMilliseconds(120), TimeSpan.Zero)] },
-        new() { Name = "Subtle Notification", Steps = [new(700, TimeSpan.FromMilliseconds(90), TimeSpan.Zero)] }
-    ];
+    public SoundPattern Sound { get; set; } = NotificationSounds.ChimeUp;
 }
 /// <summary>Groups window sizes, screen placement, and display capacity.</summary>
-public sealed class WindowOptions
+internal sealed class WindowOptions
 {
     public HotkeyOptions Hotkey { get; set; } = new();
     public System.Drawing.Size Panel { get; set; } = new(860, 720);
@@ -99,21 +89,23 @@ public sealed class WindowOptions
     public int CardGap { get; set; } = 8;
 }
 /// <summary>Determines whether notification dimensions follow physical pixels or system text scaling.</summary>
-public enum DisplaySizing { PhysicalPixels, DeviceIndependent }
+internal enum DisplaySizing { PhysicalPixels, DeviceIndependent }
 /// <summary>Identifies the native registration used by the panel shortcut.</summary>
-public sealed class HotkeyOptions
+internal sealed class HotkeyOptions
 {
     public int Id { get; set; } = 1;
+    public ConsoleKey Key { get; set; } = ConsoleKey.N;
+    public ConsoleModifiers Modifiers { get; set; } = ConsoleModifiers.Control | ConsoleModifiers.Alt;
 }
 /// <summary>Bounds the resident renderer's stylesheet, template, and image caches.</summary>
-public sealed class RenderMemoryOptions
+internal sealed class RenderMemoryOptions
 {
     public int Styles { get; set; } = 64;
     public int Templates { get; set; } = 32;
     public int Images { get; set; } = 32;
 }
 /// <summary>Names the shipped HTML template and the reserved unprivileged template action.</summary>
-public sealed class HtmlTemplateOptions
+internal sealed class HtmlTemplateOptions
 {
     public string DefaultFile { get; set; } = "Card.html";
     public string ResourceName { get; set; } = "UsefulNotification.Templates.Card.html";

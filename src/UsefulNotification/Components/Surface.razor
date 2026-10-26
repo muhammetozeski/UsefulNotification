@@ -6,7 +6,7 @@
 {
     <main class="toast-stack">@foreach (var entry in Active) { <NotificationCard Entry="entry" Toast="true" @key="entry.Id" /> }</main>
 }
-else
+else if (App.Host.IsPanelVisible)
 {
     <main class="shell">
         <header class="window-header" @onmousedown="() => App.Host.Drag()"><strong>@AppConstants.Product.Name</strong><button title="@Strings.Close" @onmousedown:stopPropagation @onclick="() => App.Host.ShowPanel(false)">&#x2715;</button></header>
@@ -26,7 +26,8 @@ else
                     @if (Editing is not null) { <NotificationEditor Request="Editing" Saved="SaveNotification" Canceled="() => Editing = null" /> }
                     <div class="quick">@foreach (TimeSpan delay in AppConstants.Notifications.QuickDelays) { <button @onclick="() => Quick(delay)">+@string.Format(Strings.MinuteFormat, delay.TotalMinutes)</button> }<button @onclick="Clear">@Strings.ClearHistory</button><button @onclick="DismissAll">@Strings.DismissAll</button></div>
                     <div class="list">
-                        @foreach (var entry in Filtered) { <NotificationCard Entry="entry" Edit="Edit" @key="entry.Id" /> }
+                        @foreach (var entry in Filtered.Skip(Page * AppConstants.Storage.HistoryPageSize).Take(AppConstants.Storage.HistoryPageSize)) { <NotificationCard Entry="entry" Edit="Edit" @key="entry.Id" /> }
+                        <div class="actions"><button disabled="@(Page == 0)" @onclick="() => Page--">@Strings.HistoryPrevious</button><button disabled="@((Page + 1) * AppConstants.Storage.HistoryPageSize >= Filtered.Count())" @onclick="() => Page++">@Strings.HistoryNext</button></div>
                         @if (!Filtered.Any()) { <p class="empty">@Strings.Empty</p> }
                     </div>
                     break;
@@ -36,15 +37,15 @@ else
                 case PanelSection.Settings:
                     <div class="settings">
                         <div class="form-grid">
-                            <label class="field">@Strings.Theme<select @bind="Settings.Theme.Value">@foreach (var theme in ThemeCatalog.Themes) { <option value="@theme.Name">@theme.Name</option> }</select></label>
-                            <label class="field">@Strings.Language<select value="@Settings.Language.Value" @onchange="ChangeLanguage">@foreach (var language in LocManager.Available) { <option value="@language.Code">@language.Name</option> }</select></label>
-                            <label class="field">@Strings.MaximumVisible<input type="number" min="1" @bind="Settings.MaximumVisible.Value" /></label>
-                            <label class="field">@Strings.Monitor<input type="number" min="0" @bind="Settings.Monitor.Value" /></label>
-                            <label class="check"><input type="checkbox" @bind="Settings.PlaySound.Value" />@Strings.PlaySound</label>
-                            <label class="check"><input type="checkbox" @bind="Settings.PauseOnHover.Value" />@Strings.PauseOnHover</label>
-                            <label class="check"><input type="checkbox" @bind="Settings.GlobalHotkey.Value" />@Strings.GlobalHotkey</label>
-                            <label class="check"><input type="checkbox" @bind="Settings.StartWithWindows.Value" />@Strings.StartWithWindows</label>
-                            <label class="check"><input type="checkbox" @bind="Settings.EnableLogging.Value" />@Strings.Logging</label>
+                            <label class="field">@Strings.Theme<select @bind="SettingsDraft.Theme">@foreach (var theme in ThemeCatalog.Themes) { <option value="@theme.Name">@theme.Name</option> }</select></label>
+                            <label class="field">@Strings.Language<select @bind="SettingsDraft.Language"><option value="@LocManager.SystemLanguage">@Strings.SystemLanguage</option>@foreach (var language in LocManager.Available) { <option value="@language.Code">@language.Name</option> }</select></label>
+                            <label class="field">@Strings.MaximumVisible<input type="number" min="1" @bind="SettingsDraft.MaximumVisible" /></label>
+                            <label class="field">@Strings.Monitor<input type="number" min="0" @bind="SettingsDraft.Monitor" /></label>
+                            <label class="check"><input type="checkbox" @bind="SettingsDraft.PlaySound" />@Strings.PlaySound</label>
+                            <label class="check"><input type="checkbox" @bind="SettingsDraft.PauseOnHover" />@Strings.PauseOnHover</label>
+                            <label class="check"><input type="checkbox" @bind="SettingsDraft.GlobalHotkey" />@Strings.GlobalHotkey</label>
+                            <label class="check"><input type="checkbox" @bind="SettingsDraft.StartWithWindows" />@Strings.StartWithWindows</label>
+                            <label class="check"><input type="checkbox" @bind="SettingsDraft.EnableLogging" />@Strings.Logging</label>
                         </div>
                         <div class="actions"><button class="primary" @onclick="SaveSettings">@Strings.Save</button><button @onclick="() => OpenDirectory(AppPaths.UserData)">@Strings.OpenData</button><button @onclick="() => OpenDirectory(Path.Combine(AppPaths.UserData, AppConstants.Storage.ThemesDirectory))">@Strings.OpenThemes</button><button @onclick="() => OpenDirectory(Path.Combine(AppPaths.UserData, AppConstants.Storage.TemplatesDirectory))">@Strings.OpenTemplates</button><button @onclick="Reload">@Strings.Reload</button><button @onclick="App.Host.Exit">@Strings.Exit</button></div>
                     </div>
@@ -61,6 +62,8 @@ else
     enum SortOrder { Newest, Oldest, Priority, NextDue, Manual }
     [Parameter] public bool Toast { get; set; }
     List<NotificationEntry> Entries = [];
+    RuntimeSettings SettingsDraft = App.Hub.Configuration with { };
+    int Page;
     PanelSection Section;
     SortOrder Sort;
     NotificationLevel? Level;
@@ -106,7 +109,7 @@ else
         }
         Guid[] rendered = Active.Select(entry => entry.Id).ToArray();
         App.Host.SurfacePrepared(Toast, rendered);
-        if (Toast) App.Host.ConfirmRendered(rendered, true);
+        if (Toast) await JavaScript.InvokeVoidAsync("notificationSurface.report");
     }
 
     /// <summary>Receives the actual card-stack height rather than guessing from message length.</summary>
@@ -115,39 +118,39 @@ else
     {
         if (!Toast || !Active.Any()) return;
         App.Host.ResizeToast(height);
-        App.Host.ConfirmRendered(Active.Select(entry => entry.Id).ToArray(), true);
+
     }
 
     /// <summary>Accepts a declared action or the reserved template dismissal action.</summary>
     /// <param name="id">The frame's notification identity.</param>
     /// <param name="action">The declared action identity.</param>
     /// <param name="reply">Optional template reply.</param>
-    [JSInvokable] public void TemplateAction(string id, string action, string reply) => RunSafely(() =>
+    [JSInvokable] public async Task TemplateAction(string id, string occurrenceId, long revision, string action, string reply) => await RunSafelyAsync(async token =>
     {
         var entry = Entries.Single(item => item.Id == Guid.Parse(id));
-        if (action == AppConstants.HtmlTemplates.DismissAction) App.Hub.Interact(entry.Id);
-        else App.Hub.Interact(entry.Id, entry.Request.Actions.Single(item => item.Id == action), reply);
+        NotificationAction? selected = action == AppConstants.HtmlTemplates.DismissAction ? null : entry.Request.Actions.Single(item => item.Id == action);
+        await App.Hub.InteractAsync(entry.Id, selected, reply, occurrenceId: Guid.Parse(occurrenceId), revision: revision);
     });
-
+    [JSInvokable] public void CardsRendered(RenderReceipt[] receipts) => RunSafely(() => App.Host.ConfirmRendered(receipts));
     /// <summary>Refreshes this renderer on its own Blazor dispatcher.</summary>
     async void Changed() => await RunSafelyAsync(async token => await InvokeAsync(() => { Entries = App.Hub.Snapshot(); StateHasChanged(); }));
 
     /// <summary>Loads a detached request into the editor.</summary>
     /// <param name="entry">The selected history or reminder item.</param>
-    void Edit(NotificationEntry entry) => Editing = entry.Request with { Id = entry.Id };
+    void Edit(NotificationEntry entry) => Editing = NotificationProtocol.Copy(entry.Request) with { Id = entry.Id };
 
     /// <summary>Commits a new notification or an edited request through the same command path as external clients.</summary>
     /// <param name="request">The editor's complete request.</param>
     void SaveNotification(NotificationRequest request)
     {
-        var result = RunSafely(() => App.Hub.Apply(new() { Operation = Entries.Any(item => item.Id == request.Id) ? NotificationOperation.Update : NotificationOperation.Send, Id = request.Id, Notification = request }));
+        var result = RunSafely(() => App.Hub.Apply(new() { Operation = Entries.Any(item => item.Id == request.Id) ? NotificationOperation.Replace : NotificationOperation.Send, Id = request.Id, Notification = request }));
         if (result.Succeeded) Editing = null;
         Error = result.Succeeded ? null : Strings.OperationFailed;
     }
 
     /// <summary>Creates an editable quick reminder rather than requiring the user to enter every field.</summary>
     /// <param name="delay">The selected quick delay.</param>
-    void Quick(TimeSpan delay) => Editing = new() { Kind = NotificationKind.Reminder, Schedule = new() { At = DateTimeOffset.Now.Add(delay) }, Sticky = true };
+    void Quick(TimeSpan delay) => Editing = new() { Schedule = new() { At = DateTimeOffset.Now.Add(delay) }, Lifetime = NotificationLifetimes.UntilAcknowledged };
 
     /// <summary>Removes completed history while preserving active and future notifications.</summary>
     void Clear() => RunSafely(() => App.Hub.Apply(new() { Operation = NotificationOperation.Clear }));
@@ -158,16 +161,10 @@ else
     /// <summary>Validates and persists settings, then reapplies native shortcuts and HTML appearance.</summary>
     void SaveSettings()
     {
-        if (Settings.MaximumVisible.Value < 1 || Settings.Monitor.Value < 0) { Error = Strings.OperationFailed; return; }
-        var result = ApplicationServices.SaveSettings();
+        var result = RunSafely(() => App.Hub.SaveConfiguration(SettingsDraft with { }));
         Error = result.Succeeded ? null : Strings.OperationFailed;
-        if (result.Succeeded) { App.Hub.Apply(new() { Operation = NotificationOperation.ReloadSettings }); App.Hub.Tick(); StateHasChanged(); }
+        if (result.Succeeded) SettingsDraft = App.Hub.Configuration with { };
     }
-
-    /// <summary>Applies and persists a language selection through the shared language boundary.</summary>
-    /// <param name="args">The selected language code.</param>
-    void ChangeLanguage(ChangeEventArgs args) { if (!ApplicationServices.ChangeLanguage(args.Value?.ToString() ?? LocManager.SystemLanguage).Succeeded) Error = Strings.OperationFailed; }
-
     /// <summary>Loads edited theme and settings files.</summary>
     void Reload() => RunSafely(() => App.Hub.Apply(new() { Operation = NotificationOperation.ReloadSettings }));
 

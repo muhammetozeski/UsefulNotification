@@ -1,7 +1,7 @@
 <div class="sound-editor">
-    <div class="row"><select value="@Selected.Name" @onchange="Select">@foreach (var sound in App.Hub.Preferences.Sounds) { <option value="@sound.Name">@sound.Name</option> }</select><button @onclick="Add">@Strings.New</button><button @onclick="Duplicate">@Strings.Duplicate</button><button @onclick="Delete">@Strings.Delete</button></div>
+    <div class="row"><select value="@Selected.Id" @onchange="Select">@foreach (var sound in Draft.Sounds) { <option value="@sound.Id">@sound.Name</option> }</select><button @onclick="Add">@Strings.New</button><button @onclick="Duplicate">@Strings.Duplicate</button><button @onclick="Delete">@Strings.Delete</button></div>
     <label class="field">@Strings.Name<input @bind="Selected.Name" /></label>
-    <label class="field">@Strings.SoundFile<input @bind="Selected.AudioFile" /></label>
+    <label class="field">@Strings.SoundFile<input @bind="AudioPath" /></label>
     @for (int index = 0; index < Selected.Steps.Count; index++)
     {
         int toneIndex = index;
@@ -20,24 +20,26 @@
 @code {
     /// <summary>Identifies an editable part of one complete tone step.</summary>
     enum ToneField { Frequency, Duration, Pause }
+    DesktopPreferences Draft = null!;
     SoundPattern Selected = null!;
+    string AudioPath { get => Selected.AudioFile?.FullName ?? string.Empty; set => Selected.AudioFile = string.IsNullOrWhiteSpace(value) ? null : new FileInfo(Path.GetFullPath(value, AppPaths.Root)); }
     string? Error;
 
     /// <summary>Selects the configured preset without creating another settings system.</summary>
-    protected override void OnInitialized() => Selected = App.Hub.Preferences.Sounds.FirstOrDefault(sound => sound.Name == App.Hub.Preferences.SelectedSound) ?? App.Hub.Preferences.Sounds[0];
+    protected override void OnInitialized() { Draft = NotificationProtocol.Copy(App.Hub.Preferences); Selected = Draft.SelectedSound; }
 
     /// <summary>Selects one existing sound.</summary>
     /// <param name="args">The chosen preset name.</param>
-    void Select(ChangeEventArgs args) => Selected = App.Hub.Preferences.Sounds.First(sound => sound.Name == args.Value?.ToString());
+    void Select(ChangeEventArgs args) => Selected = Draft.Sounds.Single(sound => sound.Id == Guid.Parse(args.Value?.ToString() ?? throw new ArgumentException("A sound identity is required.")));
 
     /// <summary>Creates an editable sound with the default tone sequence.</summary>
-    void Add() { Selected = new() { Name = Strings.New, Steps = [.. AppConstants.Notifications.Sound.Steps] }; App.Hub.Preferences.Sounds.Add(Selected); }
+    void Add() { Selected = new() { Name = Strings.New, Steps = [.. AppConstants.Notifications.Sound.Steps] }; Draft.Sounds.Add(Selected); }
 
     /// <summary>Copies the selected sequence as an independent preset.</summary>
-    void Duplicate() { Selected = Selected with { Name = Selected.Name + " " + Strings.Duplicate, Steps = [.. Selected.Steps] }; App.Hub.Preferences.Sounds.Add(Selected); }
+    void Duplicate() { Selected = Selected with { Id = Guid.NewGuid(), Name = Selected.Name + " " + Strings.Duplicate, Steps = [.. Selected.Steps] }; Draft.Sounds.Add(Selected); }
 
     /// <summary>Removes a preset while preserving at least one selectable sound.</summary>
-    void Delete() { if (App.Hub.Preferences.Sounds.Count <= 1) return; App.Hub.Preferences.Sounds.Remove(Selected); Selected = App.Hub.Preferences.Sounds[0]; }
+    void Delete() { if (Draft.Sounds.Count <= 1) return; Draft.Sounds.Remove(Selected); Selected = Draft.Sounds[0]; }
 
     /// <summary>Edits one field while keeping duration and pause represented as TimeSpan values.</summary>
     /// <param name="index">The tone's current position.</param>
@@ -58,7 +60,7 @@
     /// <summary>Persists presets and selects this sequence for notifications.</summary>
     void Save()
     {
-        var result = RunSafely(() => { App.Hub.Preferences.SelectedSound = Selected.Name; App.Hub.SavePreferences(); });
+        var result = RunSafely(() => { Draft.SelectedSound = Selected; App.Hub.SavePreferences(Draft); });
         Error = result.Succeeded ? null : Strings.OperationFailed;
     }
 }
