@@ -94,9 +94,17 @@ else if (App.Host.IsPanelVisible)
 }
 
 @code {
+    /// <summary>Selects the panel's active queue, future reminders, completed history, sound editor or application settings.</summary>
     enum PanelSection { Inbox, Scheduled, History, Sounds, Settings }
+    /// <summary>Selects ordering of the current filtered notification list without changing the stored request.</summary>
     enum SortOrder { Newest, Oldest, Priority, NextDue, Manual }
+    /// <summary>Keeps a confirmed operation with the text used by the panel's modal confirmation.</summary>
+    /// <param name="Title">Localized dialog heading.</param>
+    /// <param name="Message">Question or selected notification title shown before the operation.</param>
+    /// <param name="Button">Localized action caption.</param>
+    /// <param name="Execute">Operation performed only after explicit confirmation.</param>
     sealed record PendingConfirmation(string Title, string Message, string Button, Action Execute);
+    /// <summary>True renders the resident notification stack; false renders the tray panel while it is requested visible.</summary>
     [Parameter] public bool Toast { get; set; }
     List<NotificationEntry> Entries = [];
     RuntimeSettings SettingsDraft = App.Hub.Configuration with { };
@@ -134,14 +142,24 @@ else if (App.Host.IsPanelVisible)
         }
     }
     string EmptyLabel => Section switch { PanelSection.Scheduled => Strings.NoScheduledNotifications, PanelSection.History => Strings.NoHistory, _ => Strings.NoActiveNotifications };
+    /// <summary>Counts series in a list section using the same lifecycle categories as its navigation badge.</summary>
+    /// <param name="section">Panel destination whose badge is requested.</param>
+    /// <returns>Matching series count, or null for destinations without a notification list.</returns>
     int? SectionCount(PanelSection section) => section switch { PanelSection.Inbox => Entries.Count(entry => entry.Status is NotificationStatus.Pending or NotificationStatus.Visible), PanelSection.Scheduled => Entries.Count(entry => entry.Status is NotificationStatus.Scheduled or NotificationStatus.Snoozed), PanelSection.History => Entries.Count(entry => entry.Result is not null), _ => null };
+    /// <summary>Uses the current language for panel navigation and page headings.</summary>
+    /// <param name="section">Destination shown to the user.</param>
+    /// <returns>The localized destination name.</returns>
     static string SectionLabel(PanelSection section) => section switch { PanelSection.Inbox => Strings.Inbox, PanelSection.Scheduled => Strings.Scheduled, PanelSection.History => Strings.History, PanelSection.Sounds => Strings.Sounds, _ => Strings.SettingsTitle };
 
+    /// <summary>Loads the published journal view and subscribes this renderer to journal, language and native-close events.</summary>
     protected override void OnInitialized()
     {
         Entries = App.Hub.Snapshot(); App.Hub.Changed += Changed; LocManager.LanguageChanged += Changed;
         if (!Toast) App.Host.CloseRequested += NativeClose;
     }
+    /// <summary>Installs the HTML observer, applies physical-pixel scaling and reports completed content before native display.</summary>
+    /// <param name="firstRender">True installs this component's JavaScript bridge once.</param>
+    /// <returns>The observation or focus update for the completed render.</returns>
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (firstRender) { Reference = DotNetObjectReference.Create(this); await JavaScript.InvokeVoidAsync("notificationSurface.observe", Reference); }
@@ -150,41 +168,80 @@ else if (App.Host.IsPanelVisible)
         if (Toast) await JavaScript.InvokeVoidAsync("notificationSurface.report");
         else await JavaScript.InvokeVoidAsync("notificationSurface.focusDialog");
     }
+    /// <summary>Starts a panel move or resize from a declared HTML pointer target.</summary>
+    /// <param name="hit">Windows caption or edge hit-test value attached to the pressed HTML control.</param>
     [JSInvokable] public void BeginWindowInteraction(uint hit) => RunSafely(() => App.Host.BeginWindowInteraction(hit));
+    /// <summary>Applies the current held-pointer delta to the panel's captured rectangle.</summary>
     [JSInvokable] public void UpdateWindowInteraction() => RunSafely(App.Host.UpdateWindowInteraction);
+    /// <summary>Clears captured panel movement when the HTML gesture ends or loses capture.</summary>
     [JSInvokable] public void EndWindowInteraction() => App.Host.EndWindowInteraction();
+    /// <summary>Fits the native notification window to the active HTML stack's measured height.</summary>
+    /// <param name="height">Measured stack height in logical CSS pixels.</param>
     [JSInvokable] public void ContentResized(double height) { if (Toast && Active.Any()) App.Host.ResizeToast(height); }
+    /// <summary>Combines matching card measurements with native-window visibility before confirming delivery.</summary>
+    /// <param name="receipts">Occurrence, content revision and viewport evidence supplied by the HTML observer.</param>
     [JSInvokable] public void CardsRendered(RenderReceipt[] receipts) => RunSafely(() => App.Host.ConfirmRendered(receipts));
+    /// <summary>Routes a custom card's declared action through the same persisted interaction path as standard cards.</summary>
+    /// <param name="id">Rendered notification series identity.</param>
+    /// <param name="occurrenceId">Rendered occurrence identity used to reject an old card.</param>
+    /// <param name="revision">Accepted content revision of the rendered card.</param>
+    /// <param name="action">Declared action identity or the reserved template dismissal identity.</param>
+    /// <param name="reply">Reply text supplied by the template.</param>
+    /// <returns>The supervised interaction, including any external action outcome.</returns>
     [JSInvokable] public async Task TemplateAction(string id, string occurrenceId, long revision, string action, string reply) => await RunSafelyAsync(async token =>
     {
         var entry = Entries.Single(item => item.Id == Guid.Parse(id));
         NotificationAction? selected = action == AppConstants.HtmlTemplates.DismissAction ? null : entry.Request.Actions.Single(item => item.Id == action);
         await App.Hub.InteractAsync(entry.Id, selected, reply, occurrenceId: Guid.Parse(occurrenceId), revision: revision);
     });
+    /// <summary>Refreshes the published journal on this Blazor renderer and clamps a page emptied by another operation.</summary>
     async void Changed() => await RunSafelyAsync(async token => await InvokeAsync(() => { Entries = App.Hub.Snapshot(); Page = Math.Min(Page, PageCount - 1); StateHasChanged(); }));
+    /// <summary>Transfers native window-close requests to the renderer so unsaved edits receive the same confirmation as HTML closure.</summary>
     async void NativeClose() => await RunSafelyAsync(async token => await InvokeAsync(() => { ClosePanel(); StateHasChanged(); }));
+    /// <summary>Runs navigation or closure immediately when clean, otherwise keeps the operation behind an unsaved-change confirmation.</summary>
+    /// <param name="action">Destination operation, performed after the current detached drafts are discarded.</param>
     void RequestLeave(Action action)
     {
+        // Discard only the panel's drafts before executing the requested destination operation.
         void Leave() { Editing = null; EditorDirty = false; SoundDirty = false; SettingsDraft = App.Hub.Configuration with { }; action(); }
         if (HasChanges) Confirmation = new(Strings.UnsavedChanges, Strings.DiscardChangesQuestion, Strings.DiscardChanges, Leave); else Leave();
     }
+    /// <summary>Changes the destination after resolving unsaved drafts and resets section-specific list state.</summary>
+    /// <param name="section">Destination to open.</param>
     void Navigate(PanelSection section) { if (Section == section) return; RequestLeave(() => { Section = section; Editing = null; EditorDirty = false; SoundDirty = false; Page = 0; Error = null; Status = null; SettingsDraft = App.Hub.Configuration with { }; }); }
+    /// <summary>Hides the panel to the tray after resolving unsaved changes.</summary>
     void ClosePanel() => RequestLeave(() => App.Host.ShowPanel(false));
+    /// <summary>Consumes and executes the pending confirmation once through the application's error boundary.</summary>
     void Confirm() { var pending = Confirmation; Confirmation = null; if (pending is not null) RunSafely(pending.Execute); }
+    /// <summary>Lets Escape cancel a confirmation first, then requests cancellation of the current notification draft.</summary>
+    /// <param name="args">Keyboard event from the panel shell.</param>
     void KeyDown(KeyboardEventArgs args) { if (args.Key == "Escape") { if (Confirmation is not null) Confirmation = null; else if (Editing is not null) CancelEdit(); } }
+    /// <summary>Clears search and level restrictions and returns the filtered list to its first page.</summary>
     void ResetFilters() { Search = string.Empty; Level = null; }
+    /// <summary>Opens a detached blank request or an acknowledgement-based quick reminder after resolving existing drafts.</summary>
+    /// <param name="delay">Optional duration from now to the first due time; null creates an immediate ordinary notification draft.</param>
     void NewNotification(TimeSpan? delay = null) => RequestLeave(() => { Editing = delay is { } after ? new() { Schedule = new() { At = DateTimeOffset.Now.Add(after) }, Lifetime = NotificationLifetimes.UntilAcknowledged } : new(); EditorDirty = false; Status = null; Error = null; });
+    /// <summary>Copies the selected request into an independent editor; completed-history edits become new unscheduled sends.</summary>
+    /// <param name="entry">Selected retained series or history projection.</param>
     void Edit(NotificationEntry entry) => RequestLeave(() => { Editing = Section == PanelSection.History ? NotificationProtocol.Copy(entry.Request) with { Id = null, Tag = null, Schedule = null } : NotificationProtocol.Copy(entry.Request) with { Id = entry.Id }; EditorDirty = false; });
+    /// <summary>Closes the notification editor after any required discard confirmation.</summary>
     void CancelEdit() => RequestLeave(() => { Editing = null; EditorDirty = false; });
+    /// <summary>Asks before removing the selected series or only its selected completed history occurrence.</summary>
+    /// <param name="entry">Selected card; the current section determines whole-series or history-only deletion.</param>
     void Delete(NotificationEntry entry) => Confirmation = new(Strings.DeleteNotification, entry.Request.Title ?? Strings.NewNotificationTitle, Strings.Delete, () => App.Hub.Apply(new() { Operation = Section == PanelSection.History ? NotificationOperation.ClearHistory : NotificationOperation.Delete, Id = entry.Id, OccurrenceId = Section == PanelSection.History ? entry.Current.Id : null }));
+    /// <summary>Asks before clearing completed occurrence history while retaining active and future delivery.</summary>
     void Clear() => Confirmation = new(Strings.ClearHistory, Strings.ClearHistoryQuestion, Strings.ClearHistory, () => App.Hub.Apply(new() { Operation = NotificationOperation.ClearHistory }));
+    /// <summary>Acknowledges a captured set of active series so journal change events cannot alter the enumeration.</summary>
     void DismissAll() => RunSafely(() => { foreach (var entry in Entries.Where(item => item.Status is NotificationStatus.Visible or NotificationStatus.Pending).ToArray()) App.Hub.Apply(new() { Operation = NotificationOperation.Dismiss, Id = entry.Id }); });
+    /// <summary>Commits the complete editor draft through Send or Replace and closes the editor only after durable acceptance.</summary>
+    /// <param name="request">Complete detached request produced by the notification editor.</param>
     void SaveNotification(NotificationRequest request)
     {
         var result = RunSafely(() => App.Hub.Apply(new() { Operation = Entries.Any(item => item.Id == request.Id) ? NotificationOperation.Replace : NotificationOperation.Send, Id = request.Id, Notification = request }));
         if (result.Succeeded) { Editing = null; EditorDirty = false; Status = Strings.NotificationSaved; }
         Error = result.Succeeded ? null : Strings.OperationFailed;
     }
+    /// <summary>Validates and persists the detached settings draft, then adopts the newly published configuration.</summary>
     void SaveSettings()
     {
         Status = null;
@@ -192,8 +249,13 @@ else if (App.Host.IsPanelVisible)
         if (result.Succeeded) { SettingsDraft = App.Hub.Configuration with { }; Status = Strings.SettingsSaved; }
         Error = result.Succeeded ? null : Strings.OperationFailed;
     }
+    /// <summary>Replaces the uncommitted settings draft with the currently published configuration.</summary>
     void ResetSettings() { SettingsDraft = App.Hub.Configuration with { }; Error = null; Status = null; }
+    /// <summary>Reloads configured files through the broker and refreshes the settings draft only after success.</summary>
     void Reload() { var result = RunSafely(() => App.Hub.Apply(new() { Operation = NotificationOperation.ReloadSettings })); if (result.Succeeded) { ResetSettings(); Status = Strings.SettingsSaved; } else Error = Strings.OperationFailed; }
+    /// <summary>Creates and opens the selected portable customization directory on an explicit user action.</summary>
+    /// <param name="path">Absolute application-owned directory to show in the registered shell.</param>
     static void OpenDirectory(string path) => RunSafely(() => { Directory.CreateDirectory(path); using Process? explorer = Process.Start(new ProcessStartInfo(path) { UseShellExecute = true }); });
+    /// <summary>Removes journal, language and native-close subscriptions and releases this renderer's JavaScript reference.</summary>
     public void Dispose() { App.Hub.Changed -= Changed; LocManager.LanguageChanged -= Changed; if (!Toast) App.Host.CloseRequested -= NativeClose; Reference?.Dispose(); }
 }

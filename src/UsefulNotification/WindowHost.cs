@@ -36,12 +36,18 @@ internal sealed class WindowHost
     static StartupRegistration Startup = new();
     WindowInteraction? Interaction;
     /// <summary>Tracks the held-pointer origin and original window rectangle, following ShowPicOnly's delta-based interaction.</summary>
+    /// <param name="Hit">Validated caption or sizing-edge target that selects movement direction.</param>
+    /// <param name="Cursor">Physical screen coordinates of the pointer when the gesture began.</param>
+    /// <param name="Bounds">Original physical panel rectangle used for every delta calculation.</param>
     sealed record WindowInteraction(uint Hit, System.Drawing.Point Cursor, System.Drawing.Rectangle Bounds)
     {
         public System.Drawing.Point LastCursor = Cursor;
     }
+    /// <summary>Whether panel content is requested; hidden panels can skip rendering their full history.</summary>
     public bool IsPanelVisible => PanelWanted;
+    /// <summary>Requests a renderer-owned close flow so it can resolve unsaved drafts before hiding the native panel.</summary>
     public event Action? CloseRequested;
+    /// <summary>Lists current display indexes with localized working-area dimensions for the monitor selector.</summary>
     public List<(int Index, string Name)> Monitors
     {
         get
@@ -56,6 +62,7 @@ internal sealed class WindowHost
             return choices;
         }
     }
+    /// <summary>CSS zoom factor compensating the toast monitor's DPI when the configured size uses physical pixels.</summary>
     public double ToastContentScale => AppConstants.Windows.ToastSizing == DisplaySizing.PhysicalPixels && Toast is not null
         ? PInvoke.USER_DEFAULT_SCREEN_DPI / (double)PInvoke.GetDpiForWindow(Handle(Toast)) : 1;
 
@@ -263,6 +270,7 @@ internal sealed class WindowHost
 
     /// <summary>Plays a local audio file or tone sequence, with a system-sound fallback after an actual failure.</summary>
     /// <param name="pattern">Optional sequence; null resolves the user's selected sound.</param>
+    /// <param name="cancellationToken">Cancels waiting or playback together with the broker's shutdown token.</param>
     /// <returns>The complete sound operation.</returns>
     public async Task PlaySoundAsync(SoundPattern? pattern = null, CancellationToken cancellationToken = default)
     {
