@@ -42,7 +42,7 @@ else
             }
             @foreach (var item in Entry.Request.Checklist) { <label class="check"><input disabled="@Inactive" type="checkbox" checked="@Checked.Contains(item.Id)" @onchange="args => Check(item.Id, args)" />@item.Text</label> }
             @if (Error is not null) { <small>@Error</small> }
-            @if (ShowSnoozeOptions && !Inactive) { <div class="snooze-options">@foreach (TimeSpan delay in AppConstants.Notifications.ResolveSnooze(Entry.Request)) { <button @onclick="() => Respond(rendered, snooze: delay)">@string.Format(Strings.MinuteFormat, delay.TotalMinutes)</button> }</div> }
+            @if (ShowSnoozeOptions && !Inactive) { <div class="snooze-options">@foreach (TimeSpan delay in AppConstants.Notifications.ResolveSnooze(Entry.Request)) { <button @onclick="() => Respond(rendered, snooze: delay)">@ThemeStyle.MinutesLabel(delay.TotalMinutes)</button> }</div> }
             <div class="card-footer">
                 <div class="card-actions">
                     @if (Entry.Request.Schedule is not null || Entry.Request.Snooze is not null)

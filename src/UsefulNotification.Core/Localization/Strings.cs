@@ -113,6 +113,7 @@ internal static class Strings {
     public static string Oldest = "En eski";
     public static string Priority = "Öncelik";
     public static string NextDue = "Sonraki zaman";
+    public static string MinuteSingular = "{0} dakika";
     public static string MinuteFormat = "{0} dakika";
     public static string DateFormat = "{0}";
     public static string ShowPanel = "Bildirim panelini aç";

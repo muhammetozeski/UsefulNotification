@@ -166,6 +166,10 @@ internal static class ThemeStyle
         return css;
     }
 
+    /// <summary>Formats minute choices with the active language's singular or plural resource.</summary>
+    /// <param name="minutes">Duration expressed in minutes.</param>
+    /// <returns>The localized duration label.</returns>
+    public static string MinutesLabel(double minutes) => string.Format(minutes == 1 ? Strings.MinuteSingular : Strings.MinuteFormat, minutes);
     /// <summary>Gets the per-card palette without introducing an independent CSS token system.</summary>
     /// <param name="entry">The notification whose theme and semantic color are resolved.</param>
     /// <returns>Inline style generated from its theme objects.</returns>

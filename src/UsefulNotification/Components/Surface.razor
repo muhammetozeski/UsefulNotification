@@ -41,7 +41,7 @@ else if (App.Host.IsPanelVisible)
                         </div>
                         @if (Section != PanelSection.History)
                         {
-                            <div class="quick"><span class="muted">@Strings.QuickReminder</span>@foreach (TimeSpan delay in AppConstants.Notifications.QuickDelays) { <button @onclick="() => NewNotification(delay)">@string.Format(Strings.MinuteFormat, delay.TotalMinutes)</button> }</div>
+                            <div class="quick"><span class="muted">@Strings.QuickReminder</span>@foreach (TimeSpan delay in AppConstants.Notifications.QuickDelays) { <button @onclick="() => NewNotification(delay)">@ThemeStyle.MinutesLabel(delay.TotalMinutes)</button> }</div>
                         }
                         <div class="list-heading"><small>@string.Format(Strings.NotificationCount, Filtered.Count())</small><div class="row">@if (Section == PanelSection.History) { <button disabled="@(!Filtered.Any())" @onclick="Clear">@Strings.ClearHistory</button> } else if (Section == PanelSection.Inbox) { <button disabled="@(!Active.Any())" @onclick="DismissAll">@Strings.DismissAll</button> }</div></div>
                         <div class="content">

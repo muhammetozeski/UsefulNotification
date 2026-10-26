@@ -243,7 +243,7 @@
     static string? ActionHint(NotificationAction action) => action switch
     {
         OpenUriAction link => link.Target.ToString(), RunCommandAction command => command.StartInfo.FileName,
-        ReplyAction => Strings.Reply, SnoozeAction snooze => string.Format(Strings.MinuteFormat, snooze.Delay.TotalMinutes), _ => null
+        ReplyAction => Strings.Reply, SnoozeAction snooze => ThemeStyle.MinutesLabel(snooze.Delay.TotalMinutes), _ => null
     };
     /// <summary>Lets the containing panel protect this draft before navigation or closing.</summary>
     Task MarkDirty() => DirtyChanged.InvokeAsync(true);

@@ -99,6 +99,7 @@
   <s name="Oldest">Oldest</s>
   <s name="Priority">Priority</s>
   <s name="NextDue">Next due</s>
+  <s name="MinuteSingular">{0} minute</s>
   <s name="MinuteFormat">{0} minutes</s>
   <s name="DateFormat">{0}</s>
   <s name="ShowPanel">Open notification panel</s>
