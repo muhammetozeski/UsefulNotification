@@ -23,6 +23,21 @@ From a terminal in the extracted program folder:
 
 The first command needs no arguments. The broker supplies useful content, the sender, level, and timestamp. Programs can also use the C# interface or the local named-pipe protocol.
 
+For a .NET 10 x64 Windows caller, reference the Core project or the distributed Core library and matching dependencies:
+
+```csharp
+using UsefulNotification;
+
+await NotificationClient.SendAsync(new()
+{
+    Title = "Backup complete",
+    Theme = NotificationThemes.Happy,
+    Sound = NotificationSounds.Subtle
+});
+```
+
+The [integration guide](Docs/Integration.md) explains host startup, partial updates, typed actions, and receiving the result of a specific display.
+
 ## Features
 
 - Resident HTML renderer and background request broker; notifications do not take foreground focus.
@@ -38,6 +53,7 @@ The first command needs no arguments. The broker supplies useful content, the se
 - [Program and script integration](Docs/Integration.md)
 - [HTML and theme customization](Docs/Appearance.md)
 - [Build the source](Docs/Build.md)
+- [Change the source](Docs/Development.md)
 - [Documentation index](Docs/Index.md)
 
 The executables are digitally signed. To let Windows verify the signature, run `Install-Certificate.cmd` from `SignatureTrust.zip` once. The programs run without it; only the signature stays unverified.

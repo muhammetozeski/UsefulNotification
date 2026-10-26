@@ -1,11 +1,10 @@
 {
   "title": "Before deployment",
   "message": "Confirm completed checks.",
-  "kind": "checklist",
   "checklist": [
     { "id": "backup", "text": "Backup completed" },
     { "id": "checks", "text": "Checks passed" }
   ],
-  "actions": [{ "id": "confirm", "label": "Confirm" }],
-  "sticky": true
+  "actions": [{ "id": "confirm", "label": "Confirm", "kind": "callback" }],
+  "lifetime": { "mode": "acknowledge" }
 }

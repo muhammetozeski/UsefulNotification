@@ -10,6 +10,8 @@ From the repository root:
 
 The script invokes Visual Studio MSBuild with `/restore /t:Publish` in Release configuration. NuGet uses its normal configured sources, reuses cached packages, and restores missing dependencies automatically. Do not replace this with manually downloaded packages or a source restricted to the global cache.
 
+Publishing starts in a clean `publish\UsefulNotification.pending` folder and replaces `publish\UsefulNotification` only after all three entry projects and the Windows resource index are present. Previous staging/output folders go to the Recycle Bin. This prevents stale binaries or runtime data from entering a subsequent package. The public Core XML documentation is generated beside `UsefulNotification.Core.dll` and included in `AppData`; keep both for IntelliSense. The GUI launcher uses the same Core error boundary and portable log location as the broker.
+
 The Visual Studio build host is deliberate: with the .NET 10.0.402 SDK and this Windows App SDK configuration, `dotnet build` reached a packaging task whose `Microsoft.Build.Packaging.Pri.Tasks.dll` was absent from the SDK location. Visual Studio MSBuild completed the same Windows build with its installed packaging tools.
 
 Keep `EnableMsixTooling=true` together with `WindowsPackageType=None`. The former enables the Windows resource publishing targets; the latter keeps the application unpackaged. With tooling disabled, the publish command succeeded but omitted the resource index and the relocated application failed to load MAUI styles. The working output includes `resources.pri`.
