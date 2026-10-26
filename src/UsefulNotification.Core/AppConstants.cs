@@ -17,6 +17,7 @@ internal static class AppConstants
     public static RenderMemoryOptions RenderMemory = new();
     public static HtmlTemplateOptions HtmlTemplates = new();
     public static ActionPolicy Actions = new();
+    public static AudioPolicy Audio = new();
     public static JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true, AllowOutOfOrderMetadataProperties = true, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull, Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase), new NotificationThemeConverter(), new FileInfoConverter(), new ColorConverter(), new ProcessStartConverter(), new ChangeConverterFactory() } };
     public static JsonSerializerOptions WireJson = new(Json) { WriteIndented = false };
     public static RetryStrategyOptions Retry = new()
@@ -87,6 +88,14 @@ internal sealed class WindowOptions
     public System.Drawing.Size MinimumPanel { get; set; } = new(620, 460);
     public int ScreenMargin { get; set; } = 16;
     public int CardGap { get; set; } = 8;
+}
+/// <summary>Shares Windows tone constraints and interruptible playback slices between editors, validation and native audio.</summary>
+internal sealed class AudioPolicy
+{
+    public System.ComponentModel.DataAnnotations.RangeAttribute Frequency { get; set; } = new(37, 32767);
+    public System.ComponentModel.DataAnnotations.RangeAttribute DurationMilliseconds { get; set; } = new(1d, int.MaxValue);
+    public System.ComponentModel.DataAnnotations.RangeAttribute PauseMilliseconds { get; set; } = new(0d, int.MaxValue);
+    public TimeSpan PlaybackSlice { get; set; } = TimeSpan.FromMilliseconds(50);
 }
 /// <summary>Determines whether notification dimensions follow physical pixels or system text scaling.</summary>
 internal enum DisplaySizing { PhysicalPixels, DeviceIndependent }

@@ -1,4 +1,23 @@
 @{ var rendered = new RenderReceipt(Entry.Id, Entry.Current.Id, Entry.Current.ContentRevision, true); }
+@if (!Toast)
+{
+    <article class="notification-record">
+        <header class="record-meta"><span>@Entry.Request.Source</span><span>@ThemeStyle.Label(Entry.Status) · @DisplayTime.ToString(AppConstants.Notifications.TimeFormat)</span></header>
+        @if (Inactive)
+        {
+            <h2>@Entry.Request.Title</h2><p>@Entry.Request.Message</p>
+            @if (Entry.Status is NotificationStatus.Scheduled or NotificationStatus.Snoozed) { <p class="muted">@Strings.When: @Entry.DueAt.ToString(AppConstants.Notifications.TimeFormat)</p> }
+            @if (Entry.Current.Result?.Reply is { Length: > 0 } reply) { <p class="reply-result"><small>@Strings.SubmittedReply</small><br />@reply</p> }
+            @foreach (var item in Entry.Request.Checklist) { <p>@(Entry.Current.Result?.CheckedItems.Contains(item.Id) ?? item.Checked ? "☑" : "☐") @item.Text</p> }
+            @if (Entry.Request.Template is not null && CustomHtml is not null) { <details><summary>@Strings.Preview</summary><iframe class="custom-template" title="@Entry.Request.Title" sandbox="" srcdoc="@CustomHtml"></iframe></details> }
+        }
+        else { <NotificationCard Entry="Entry" Toast="true" /> }
+        <footer class="record-actions"><div class="row"><button @onclick="() => Edit.InvokeAsync(Entry)">@Strings.Edit</button><details><summary>@Strings.MoreActions</summary><div class="card-tools"><button @onclick="Duplicate">@Strings.Duplicate</button><button @onclick="Retry">@Strings.Retry</button>@if (ManualOrder) { <button @onclick="() => Move(-1)">@Strings.MoveUp</button><button @onclick="() => Move(1)">@Strings.MoveDown</button> }<button class="danger" @onclick="() => DeleteRequested.InvokeAsync(Entry)">@Strings.Delete</button></div></details></div></footer>
+        @if (Error is not null) { <p class="error" role="alert">@Error</p> }
+    </article>
+}
+else
+{
 @if (Entry.Request.Template is not null && CustomHtml is not null)
 {
     <iframe @key="(Entry.Current.Id, Entry.Current.ContentRevision)" class="custom-template" title="@Entry.Request.Title" data-notification="@Entry.Id" data-occurrence="@Entry.Current.Id" data-revision="@Entry.Current.ContentRevision" sandbox="@(Inactive ? string.Empty : "allow-scripts")" srcdoc="@CustomHtml" @onmouseenter="() => Hover(rendered, true)" @onmouseleave="() => Hover(rendered, false)"></iframe>
@@ -9,8 +28,8 @@ else
     <article class="card" data-card="@Entry.Id" data-notification="@Entry.Id" data-occurrence="@Entry.Current.Id" data-revision="@Entry.Current.ContentRevision" style="@ThemeStyle.CardStyle(Entry)" @onmouseenter="() => Hover(rendered, true)" @onmouseleave="() => Hover(rendered, false)">
         <header class="card-header">
             <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4M12 1v2" /></svg>
-            <div class="meta"><span class="sender">@Entry.Request.Source</span><small>@ThemeStyle.Label(Entry.Request.Level ?? AppConstants.Notifications.Level)</small></div>
-            <button disabled="@Inactive" title="@Strings.Dismiss" @onclick="() => Respond(rendered)">&#x2715;</button>
+            <div class="meta"><span class="sender">@Entry.Request.Source</span><time>@DisplayTime.ToString(AppConstants.Notifications.TimeFormat)</time></div>
+            <button disabled="@Inactive" title="@Strings.Dismiss" aria-label="@Strings.Dismiss" @onclick="() => Respond(rendered)">&#x2715;</button>
         </header>
         <div class="card-content">
             <h2>@Entry.Request.Title</h2><p>@Entry.Request.Message</p>
@@ -23,29 +42,31 @@ else
             }
             @foreach (var item in Entry.Request.Checklist) { <label class="check"><input disabled="@Inactive" type="checkbox" checked="@Checked.Contains(item.Id)" @onchange="args => Check(item.Id, args)" />@item.Text</label> }
             @if (Error is not null) { <small>@Error</small> }
+            @if (ShowSnoozeOptions && !Inactive) { <div class="snooze-options">@foreach (TimeSpan delay in AppConstants.Notifications.ResolveSnooze(Entry.Request)) { <button @onclick="() => Respond(rendered, snooze: delay)">@string.Format(Strings.MinuteFormat, delay.TotalMinutes)</button> }</div> }
             <div class="card-footer">
-                <time>@Entry.CreatedAt.ToString(AppConstants.Notifications.TimeFormat)</time>
                 <div class="card-actions">
                     @if (Entry.Request.Schedule is not null || Entry.Request.Snooze is not null)
                     {
-                        <span class="snooze"><button disabled="@Inactive" @onclick="() => Respond(rendered, snooze: SnoozeDelay)">@Strings.Snooze</button><details><summary>&#x25BE;</summary><div class="snooze-options">@foreach (TimeSpan delay in AppConstants.Notifications.ResolveSnooze(Entry.Request)) { <button disabled="@Inactive" @onclick="() => Respond(rendered, snooze: delay)">@string.Format(Strings.MinuteFormat, delay.TotalMinutes)</button> }</div></details></span>
+                        <span class="snooze"><button disabled="@Inactive" @onclick="() => Respond(rendered, snooze: SnoozeDelay)">@Strings.Snooze</button><button disabled="@Inactive" title="@Strings.Snooze" aria-label="@Strings.Snooze" aria-expanded="@ShowSnoozeOptions" @onclick="() => ShowSnoozeOptions = !ShowSnoozeOptions">&#x25BE;</button></span>
                     }
-                    @foreach (var action in Entry.Request.Actions) { <button disabled="@Inactive" class="primary" @onclick="() => Respond(rendered, action)">@(action.Label ?? action.DefaultLabel)</button> }
+                    @foreach (var action in Entry.Request.Actions) { <button disabled="@Inactive" class="@(action == Entry.Request.Actions.LastOrDefault() ? "primary" : null)" @onclick="() => Respond(rendered, action)">@(action.Label ?? action.DefaultLabel)</button> }
                     @if (Entry.Request.Input is not null && Entry.Request.Actions.All(action => action is not ReplyAction)) { <button disabled="@Inactive" class="primary" @onclick="() => Respond(rendered, new ReplyAction())">@Strings.Reply</button> }
-                    <button disabled="@Inactive" class="primary" @onclick="() => Respond(rendered)">@Strings.Dismiss</button>
+                    <button disabled="@Inactive" class="@(Entry.Request.Actions.Count == 0 && Entry.Request.Input is null ? "primary" : null)" @onclick="() => Respond(rendered)">@Strings.Dismiss</button>
                 </div>
             </div>
         </div>
     </article>
 }
-@if (!Toast)
-{
-    <small>@ThemeStyle.Label(Entry.Status) @if (Entry.Status is NotificationStatus.Scheduled or NotificationStatus.Snoozed) { <span> · @Entry.DueAt.ToString(AppConstants.Notifications.TimeFormat)</span> }</small>
-    <div class="card-tools"><button @onclick="() => Edit.InvokeAsync(Entry)">@Strings.Edit</button><button @onclick="Duplicate">@Strings.Duplicate</button><button @onclick="Retry">@Strings.Retry</button><button @onclick="() => Move(-1)">@Strings.MoveUp</button><button @onclick="() => Move(1)">@Strings.MoveDown</button><button @onclick="Delete">@Strings.Delete</button></div>
+
 }
 @code {
     [Parameter, EditorRequired] public NotificationEntry Entry { get; set; } = null!;
     [Parameter] public bool Toast { get; set; }
+    [Parameter] public bool ManualOrder { get; set; }
+    [Parameter] public bool History { get; set; }
+    [Parameter] public EventCallback<NotificationEntry> DeleteRequested { get; set; }
+    bool ShowSnoozeOptions;
+    DateTimeOffset DisplayTime => Entry.Current.VisibleAt ?? Entry.Current.ClosedAt ?? Entry.Current.DueAt;
     [Parameter] public EventCallback<NotificationEntry> Edit { get; set; }
     bool Inactive => Entry.Current.Result is not null || Entry.Current.Action is not null || Entry.Status is not (NotificationStatus.Pending or NotificationStatus.Visible);
     string? Reply;
@@ -62,8 +83,8 @@ else
         Appearance = ThemeCatalog.For(Entry.Request);
         if (PreparedOccurrence != Entry.Current.Id)
         {
-            PreparedOccurrence = Entry.Current.Id; Reply = Entry.Request.Input?.Value;
-            Checked = Entry.Request.Checklist.Where(item => item.Checked).Select(item => item.Id).ToHashSet();
+            PreparedOccurrence = Entry.Current.Id; ShowSnoozeOptions = false; Reply = Entry.Current.Result?.Reply ?? Entry.Request.Input?.Value;
+            Checked = Entry.Current.Result is { } completed ? completed.CheckedItems.ToHashSet() : Entry.Request.Checklist.Where(item => item.Checked).Select(item => item.Id).ToHashSet();
             SnoozeDelay = AppConstants.Notifications.ResolveSnooze(Entry.Request)[0];
         }
         string content = System.Text.Json.JsonSerializer.Serialize(new { Entry.Request, Theme = Appearance, ThemeCatalog.Revision }, AppConstants.WireJson);
@@ -83,8 +104,8 @@ else
     }
     async Task Hover(RenderReceipt rendered, bool hover) => await RunSafelyAsync(async token => await App.Hub.InteractAsync(rendered.NotificationId, hover: hover, occurrenceId: rendered.OccurrenceId, revision: rendered.ContentRevision));
     void Check(string id, ChangeEventArgs args) { if (args.Value is true) Checked.Add(id); else Checked.Remove(id); }
-    void Duplicate() => RunSafely(() => App.Hub.Apply(new() { Notification = Entry.Request with { Id = Guid.NewGuid(), Schedule = null, Tag = null } }));
-    void Retry() => RunSafely(() => App.Hub.Apply(new() { Operation = NotificationOperation.Retry, Id = Entry.Id }));
-    void Move(int direction) => RunSafely(() => App.Hub.Apply(new() { Operation = NotificationOperation.Move, Id = Entry.Id, Order = Entry.Order + direction }));
-    void Delete() => RunSafely(() => App.Hub.Apply(new() { Operation = NotificationOperation.Delete, Id = Entry.Id }));
+    void Duplicate() => Manage(new() { Notification = Entry.Request with { Id = Guid.NewGuid(), Schedule = null, Tag = null } });
+    void Retry() { if (History) Duplicate(); else Manage(new() { Operation = NotificationOperation.Retry, Id = Entry.Id }); }
+    void Move(int direction) => Manage(new() { Operation = NotificationOperation.Move, Id = Entry.Id, Order = App.Hub.Snapshot().OrderBy(item => item.Order).Select(item => item.Id).ToList().IndexOf(Entry.Id) + direction });
+    void Manage(NotificationCommand command) { var result = RunSafely(() => App.Hub.Apply(command)); Error = result.Succeeded ? null : Strings.OperationFailed; }
 }

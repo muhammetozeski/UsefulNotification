@@ -1,31 +1,73 @@
-<section class="editor">
-    <div class="form-grid">
-        <label class="field">@Strings.Title<input @bind="Draft.Title" /></label>
-        <label class="field">@Strings.Source<input @bind="Draft.Source" /></label>
-        <label class="field span-all">@Strings.Message<textarea rows="@ThemeCatalog.Get().Layout.ReplyRows" @bind="Draft.Message"></textarea></label>
-        <label class="field">@Strings.Kind<select @bind="ContentKey">@foreach (var choice in Contents) { <option value="@choice.Key">@ThemeStyle.Label(choice.Key)</option> }</select></label>
-        <label class="field">@Strings.Level<select @bind="Draft.Level">@foreach (var level in Enum.GetValues<NotificationLevel>()) { <option value="@level">@ThemeStyle.Label(level)</option> }</select></label>
-        <label class="field">@Strings.Theme<select value="@Draft.Theme?.Name" @onchange="args => Draft.Theme = string.IsNullOrWhiteSpace(args.Value?.ToString()) ? null : NotificationProtocol.Copy(ThemeCatalog.Get(args.Value?.ToString(), required: true))"><option value="">@Strings.Theme</option>@foreach (var theme in ThemeCatalog.Themes) { <option value="@theme.Name">@theme.Name</option> }</select></label>
-        <label class="field">@Strings.Duration<input type="number" min="0" @bind="Seconds" /></label>
-        <label class="check"><input type="checkbox" @bind="Sticky" />@Strings.Sticky</label><label class="check"><input type="checkbox" @bind="Silent" />@Strings.Silent</label>
-        <label class="field">@Strings.When<input type="datetime-local" @bind="Target" /></label>
-        <label class="field">@Strings.Recurrence<select @bind="RecurrenceKey">@foreach (var choice in Repetitions) { <option value="@choice.Key">@ThemeStyle.Label(choice.Key)</option> }</select></label>
-        @if (RecurrenceKey == nameof(Strings.Interval)) { <label class="field">@Strings.Interval<input type="number" min="1" @bind="IntervalMinutes" /></label> }
-        @if (RecurrenceKey == nameof(Strings.Weekly)) { <div class="row span-all">@foreach (DayOfWeek day in Enum.GetValues<DayOfWeek>()) { <label class="check"><input type="checkbox" checked="@WeeklyDays.Contains(day)" @onchange="args => SelectDay(day, args)" />@System.Globalization.CultureInfo.CurrentCulture.DateTimeFormat.GetDayName(day)</label> }</div> }
-        @if (RecurrenceKey == nameof(Strings.Monthly)) { <label class="field">@Strings.When<input @bind="MonthlyDays" /></label> }
-        @if (Selected.Content.Progress is not null) { <label class="field">@Strings.ProgressValue<input type="number" @bind="ProgressValue" /></label> }
-        @if (Selected.Content.Image is not null) { <label class="field span-all">@Strings.ImagePath<input @bind="ImagePath" /></label> }
-        @if (Selected.Content.Checklist.Count > 0 || Selected.Content.Actions.Count > 0) { <label class="field span-all">@Strings.Items<textarea @bind="Items"></textarea></label> }
-        @if (Selected.Content.Template is not null) { <label class="field span-all">@Strings.Template<input @bind="TemplatePath" /></label> }
-    </div>
-    @if (Error is not null) { <p>@Error</p> }
-    <div class="actions"><button class="primary" @onclick="Save">@(Request.Id is null ? Strings.Send : Strings.Save)</button><button @onclick="() => Canceled.InvokeAsync()">@Strings.Cancel</button></div>
-</section>
+<form class="editor" @onsubmit="Save" @onsubmit:preventDefault @oninput="MarkDirty" @onchange="MarkDirty">
+    <div class="editor-header"><h2>@(Request.Id is null ? Strings.NewNotificationTitle : Strings.EditNotificationTitle)</h2></div>
+    <fieldset disabled="@Saving" class="form-section">
+        <legend>@Strings.NotificationContent</legend>
+        <div class="form-grid">
+            <label class="field span-all">@Strings.Title<input @bind="Draft.Title" /></label>
+            <label class="field span-all">@Strings.Message<textarea rows="@ThemeCatalog.Get().Layout.ReplyRows" @bind="Draft.Message"></textarea></label>
+            <label class="field">@Strings.Kind<select @bind="ContentKey">@foreach (var choice in Contents) { <option value="@choice.Key">@ThemeStyle.Label(choice.Key)</option> }</select></label>
+            <label class="field">@Strings.Level<select @bind="Draft.Level">@foreach (var level in Enum.GetValues<NotificationLevel>()) { <option value="@level">@ThemeStyle.Label(level)</option> }</select></label>
+            @if (Request.Id is not null && Selected.Key != OriginalContent) { <small class="span-all muted">@Strings.ContentTypeChange</small> }
+            @if (HasProgress) { <label class="field">@Strings.ProgressValue<input type="number" min="0" max="@ProgressDraft?.Maximum" step="any" @bind="ProgressValue" /></label> }
+            @if (HasImage) { <label class="field span-all">@Strings.ImagePath<input @bind="ImagePath" /></label> }
+            @if (HasActions)
+            {
+                <div class="editor-items span-all">
+                    @foreach (var action in ActionDraft)
+                    {
+                        <div class="row" @key="action.Id"><label class="field">@Strings.ActionButton<input @bind="action.Label" placeholder="@action.DefaultLabel" />@if (ActionHint(action) is { } hint) { <small class="muted">@hint</small> }</label><button type="button" class="danger" @onclick="() => ChangeAction(action.Id)">@Strings.Delete</button></div>
+                    }
+                    <button type="button" @onclick="() => ChangeAction()">@Strings.AddAction</button>
+                </div>
+            }
+            @if (HasChecklist)
+            {
+                <div class="editor-items span-all">
+                    @foreach (var item in ChecklistDraft)
+                    {
+                        <div class="row" @key="item.Id"><input type="checkbox" aria-label="@Strings.Confirm" @bind="item.Checked" /><label class="field">@Strings.Items<input @bind="item.Text" /></label><button type="button" class="danger" @onclick="() => ChangeChecklist(item.Id)">@Strings.Delete</button></div>
+                    }
+                    <button type="button" @onclick="() => ChangeChecklist()">@Strings.AddChecklistItem</button>
+                </div>
+            }
+            @if (HasTemplate) { <label class="field span-all">@Strings.Template<input @bind="TemplatePath" /></label> }
+        </div>
+    </fieldset>
+    <fieldset disabled="@Saving" class="form-section">
+        <legend>@Strings.ScheduleOptions</legend>
+        <label class="check"><input type="checkbox" @bind="ScheduleEnabled" />@Strings.ScheduleNotification</label>
+        @if (ScheduleEnabled)
+        {
+            <div class="form-grid">
+                <label class="field">@Strings.When<input type="datetime-local" @bind="Target" /><small class="muted">@(Target is null ? Strings.ImmediateDelivery : string.Empty)</small></label>
+                <label class="field">@Strings.Recurrence<select @bind="RecurrenceKey">@foreach (var choice in Repetitions) { <option value="@choice.Key">@ThemeStyle.Label(choice.Key)</option> }</select></label>
+                @if (RecurrenceKey == nameof(Strings.Interval)) { <label class="field">@Strings.IntervalMinutes<input type="number" min="0" step="any" @bind="IntervalMinutes" /></label> }
+                @if (RecurrenceKey == nameof(Strings.Weekly)) { <div class="row span-all">@foreach (DayOfWeek day in Enum.GetValues<DayOfWeek>()) { <label class="check"><input type="checkbox" checked="@WeeklyDays.Contains(day)" @onchange="args => SelectDay(day, args)" />@System.Globalization.CultureInfo.CurrentCulture.DateTimeFormat.GetDayName(day)</label> }</div> }
+                @if (RecurrenceKey == nameof(Strings.Monthly)) { <label class="field span-all">@Strings.MonthlyDays<input @bind="MonthlyDays" /></label> }
+            </div>
+        }
+    </fieldset>
+    <details class="form-section" open="@(Request.Id is not null)">
+        <summary>@Strings.AdvancedOptions</summary>
+        <fieldset disabled="@Saving" class="form-grid">
+            <label class="field">@Strings.Source<input @bind="Draft.Source" /></label>
+            <label class="field">@Strings.Theme<select value="@Draft.Theme?.Name" @onchange="SelectTheme"><option value="">@Strings.UsePanelTheme</option>@if (Request.Theme is { } current && !ThemeCatalog.Themes.Any(theme => theme.Name == current.Name)) { <option value="@current.Name">@current.Name</option> }@foreach (var theme in ThemeCatalog.Themes) { <option value="@theme.Name">@theme.Name</option> }</select></label>
+            <label class="check"><input type="checkbox" @bind="Sticky" />@Strings.Sticky</label>
+            <label class="field">@Strings.Duration<input type="number" min="0" step="any" disabled="@Sticky" @bind="Seconds" /></label>
+            <label class="check"><input type="checkbox" @bind="Silent" />@Strings.Silent</label>
+        </fieldset>
+    </details>
+    @if (Error is not null) { <p class="error" role="alert">@Error</p> }
+    <div class="actions"><button type="submit" class="primary" disabled="@Saving">@(Saving ? Strings.Saving : Request.Id is null ? Strings.Send : Strings.Save)</button><button type="button" class="secondary" disabled="@Saving" @onclick="() => Canceled.InvokeAsync()">@Strings.Cancel</button></div>
+</form>
 @code {
     [Parameter, EditorRequired] public NotificationRequest Request { get; set; } = null!;
     [Parameter] public EventCallback<NotificationRequest> Saved { get; set; }
     [Parameter] public EventCallback Canceled { get; set; }
+    [Parameter] public EventCallback<bool> DirtyChanged { get; set; }
+    /// <summary>Owns one standard content prototype and the rule used to recognize an existing request.</summary>
     sealed record ContentChoice(string Key, NotificationRequest Content, Func<NotificationRequest, bool> Matches);
+    /// <summary>Pairs a translated editor choice with its actual recurrence object.</summary>
     sealed record RepetitionChoice(string Key, NotificationRecurrence? Policy);
     readonly List<ContentChoice> Contents =
     [
@@ -33,87 +75,176 @@
         new(nameof(Strings.Reminder), new() { Schedule = new(), Lifetime = NotificationLifetimes.UntilAcknowledged }, request => request.Schedule is not null),
         new(nameof(Strings.Progress), new() { Progress = new() }, request => request.Progress is not null),
         new(nameof(Strings.Image), new() { Image = new(new Uri(AppPaths.Root)) }, request => request.Image is not null),
-        new(nameof(Strings.Choice), new() { Actions = [new CallbackAction()] }, request => request.Actions.Count > 0),
+        new(nameof(Strings.Choice), new() { Actions = [new CallbackAction { Label = Strings.Confirm }] }, request => request.Actions.Count > 0),
         new(nameof(Strings.Input), new() { Input = new() }, request => request.Input is not null),
-        new(nameof(Strings.Checklist), new() { Checklist = [new()] }, request => request.Checklist.Count > 0),
+        new(nameof(Strings.Checklist), new() { Checklist = [new() { Text = Strings.Confirm }] }, request => request.Checklist.Count > 0),
         new(nameof(Strings.Custom), new() { Template = new() }, request => request.Template is not null)
     ];
     readonly List<RepetitionChoice> Repetitions =
     [
         new(nameof(Strings.None), null), new(nameof(Strings.Hourly), NotificationRecurrences.Hourly), new(nameof(Strings.Daily), NotificationRecurrences.Daily),
         new(nameof(Strings.Weekdays), NotificationRecurrences.Weekdays), new(nameof(Strings.Weekly), NotificationRecurrences.Weekly),
-        new(nameof(Strings.Monthly), NotificationRecurrences.Monthly), new(nameof(Strings.Yearly), NotificationRecurrences.Yearly),
-        new(nameof(Strings.Interval), NotificationRecurrences.Hourly)
+        new(nameof(Strings.Monthly), NotificationRecurrences.Monthly), new(nameof(Strings.Yearly), NotificationRecurrences.Yearly), new(nameof(Strings.Interval), NotificationRecurrences.Hourly)
     ];
     NotificationRequest Draft = new();
     NotificationRequest? Prepared;
     ContentChoice Selected = null!;
     string OriginalContent = string.Empty;
-    string OriginalItems = string.Empty;
     string OriginalScheduleState = string.Empty;
-    string ScheduleState => System.Text.Json.JsonSerializer.Serialize(new { Target, RecurrenceKey, IntervalMinutes, MonthlyDays, Days = WeeklyDays.Order().ToArray() });
-    string ContentKey { get => Selected.Key; set => Selected = Contents.Single(choice => choice.Key == value); }
+    string ScheduleState => System.Text.Json.JsonSerializer.Serialize(new { ScheduleEnabled, Target, RecurrenceKey, IntervalMinutes, MonthlyDays, Days = WeeklyDays.Order().ToArray() });
+    string ContentKey
+    {
+        get => Selected.Key;
+        set
+        {
+            Selected = Contents.Single(choice => choice.Key == value);
+            Sticky = AppConstants.Notifications.ResolveLifetime(ContentChanged ? Selected.Content : Draft) is AcknowledgedLifetime;
+            if (Selected.Content.Schedule is not null) ScheduleEnabled = true;
+            ActionDraft = NotificationProtocol.Copy(ContentChanged ? Selected.Content.Actions : Draft.Actions);
+            ChecklistDraft = NotificationProtocol.Copy(ContentChanged ? Selected.Content.Checklist : Draft.Checklist);
+            HasActions = ActionDraft.Count > 0;
+            HasChecklist = ChecklistDraft.Count > 0;
+            ProgressValue = ContentChanged ? Selected.Content.Progress?.Value ?? 0 : OriginalProgress;
+        }
+    }
+    bool ContentChanged => Selected.Key != OriginalContent;
+    ProgressContent? ProgressDraft => ContentChanged ? Selected.Content.Progress : Draft.Progress;
+    bool HasProgress => Selected.Content.Progress is not null || !ContentChanged && Draft.Progress is not null;
+    bool HasImage => Selected.Content.Image is not null || !ContentChanged && Draft.Image is not null;
+    bool HasActions;
+    bool HasChecklist;
+    bool HasTemplate => Selected.Content.Template is not null || !ContentChanged && Draft.Template is not null;
     string RecurrenceKey = nameof(Strings.None);
     DateTime? Target;
-    double IntervalMinutes = NotificationRecurrences.Hourly.Every.TotalMinutes;
-    double Seconds = NotificationLifetimes.Default.Duration.TotalSeconds;
+    double IntervalMinutes;
+    double Seconds;
+    double OriginalSeconds;
     bool Sticky;
+    bool OriginalSticky;
     bool Silent;
+    bool OriginalSilent;
+    bool ScheduleEnabled;
+    bool Saving;
     double ProgressValue;
-    string Items = string.Empty;
+    double OriginalProgress;
+    List<NotificationAction> ActionDraft = [];
+    List<ChecklistItem> ChecklistDraft = [];
     string MonthlyDays = string.Empty;
     string ImagePath = string.Empty;
     string TemplatePath = string.Empty;
     HashSet<DayOfWeek> WeeklyDays = [];
     string? Error;
 
+    /// <summary>Copies the selected request once; ordinary parent rerenders preserve the unfinished draft.</summary>
     protected override void OnParametersSet()
     {
         if (ReferenceEquals(Prepared, Request)) return;
-        Prepared = Request; Draft = NotificationProtocol.Copy(Request);
+        Prepared = Request; Draft = NotificationProtocol.Copy(Request); Error = null;
         Draft.Level ??= AppConstants.Notifications.Level;
         Selected = Contents.Last(choice => choice.Matches(Draft)); OriginalContent = Selected.Key;
-        Target = Draft.Schedule?.At?.LocalDateTime ?? (Draft.Schedule is not null && Draft.Id is { } id ? App.Hub.Snapshot().FirstOrDefault(entry => entry.Id == id)?.DueAt.LocalDateTime : null);
+        ScheduleEnabled = Draft.Schedule is not null;
+        Target = Draft.Schedule?.At?.LocalDateTime ?? (ScheduleEnabled && Draft.Id is { } id ? App.Hub.Snapshot().FirstOrDefault(entry => entry.Id == id)?.DueAt.LocalDateTime : null);
         var recurrence = Draft.Schedule?.Recurrence;
         RecurrenceKey = recurrence switch { IntervalRecurrence interval when interval.Every != NotificationRecurrences.Hourly.Every => nameof(Strings.Interval), IntervalRecurrence => nameof(Strings.Hourly), WeeklyRecurrence weekly when weekly.Days.SequenceEqual(NotificationRecurrences.Weekdays.Days) => nameof(Strings.Weekdays), WeeklyRecurrence => nameof(Strings.Weekly), MonthlyRecurrence => nameof(Strings.Monthly), DailyRecurrence => nameof(Strings.Daily), YearlyRecurrence => nameof(Strings.Yearly), _ => nameof(Strings.None) };
         IntervalMinutes = (recurrence as IntervalRecurrence)?.Every.TotalMinutes ?? NotificationRecurrences.Hourly.Every.TotalMinutes;
-        Seconds = (Draft.Lifetime as ExpiringLifetime)?.Duration.TotalSeconds ?? NotificationLifetimes.Default.Duration.TotalSeconds;
-        Sticky = Draft.Lifetime is AcknowledgedLifetime || Draft.Lifetime is null && (Draft.Schedule is not null || Draft.Input is not null || Draft.Actions.Count > 0 || Draft.Checklist.Count > 0);
-        Silent = Draft.Silent ?? false; ProgressValue = Draft.Progress?.Value ?? 0;
+        Seconds = OriginalSeconds = (Draft.Lifetime as ExpiringLifetime)?.Duration.TotalSeconds ?? NotificationLifetimes.Default.Duration.TotalSeconds;
+        Sticky = OriginalSticky = AppConstants.Notifications.ResolveLifetime(Draft) is AcknowledgedLifetime;
+        Silent = OriginalSilent = Draft.Silent ?? false; ProgressValue = OriginalProgress = Draft.Progress?.Value ?? 0;
         WeeklyDays = (recurrence as WeeklyRecurrence)?.Days.ToHashSet() ?? [];
         MonthlyDays = string.Join(",", (recurrence as MonthlyRecurrence)?.Days ?? []);
         OriginalScheduleState = ScheduleState;
         ImagePath = Draft.Image?.Source.ToString() ?? string.Empty; TemplatePath = Draft.Template?.File?.FullName ?? string.Empty;
-        Items = string.Join(Environment.NewLine, Draft.Actions.Count > 0 ? Draft.Actions.Select(item => item.Label) : Draft.Checklist.Select(item => item.Text)); OriginalItems = Items;
+        ActionDraft = NotificationProtocol.Copy(Draft.Actions); ChecklistDraft = NotificationProtocol.Copy(Draft.Checklist);
+        HasActions = ActionDraft.Count > 0; HasChecklist = ChecklistDraft.Count > 0;
     }
+
+    /// <summary>Validates user-entered fields and emits a detached complete request while retaining unchanged advanced content.</summary>
     async Task Save()
     {
-        var result = RunSafely(() =>
+        if (Saving) return;
+        Error = null;
+        if (!Sticky && (!double.IsFinite(Seconds) || Seconds <= 0 || Seconds > (DateTimeOffset.MaxValue - DateTimeOffset.Now).TotalSeconds)) { Error = Strings.InvalidDuration; return; }
+        if (ScheduleEnabled && RecurrenceKey == nameof(Strings.Interval) && (!double.IsFinite(IntervalMinutes) || IntervalMinutes <= 0 || IntervalMinutes > TimeSpan.MaxValue.TotalMinutes)) { Error = Strings.InvalidInterval; return; }
+        int[] monthDays = [];
+        if (ScheduleEnabled && RecurrenceKey == nameof(Strings.Monthly))
         {
-            if (Selected.Key != OriginalContent)
+            var parts = MonthlyDays.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (parts.Any(part => !int.TryParse(part, out int day) || day is < 1 or > 31)) { Error = Strings.InvalidMonthDays; return; }
+            monthDays = parts.Select(int.Parse).Distinct().Order().ToArray();
+        }
+        if (HasProgress && ProgressDraft is { } progress && (!double.IsFinite(ProgressValue) || ProgressValue < 0 || ProgressValue > progress.Maximum)) { Error = string.Format(Strings.InvalidProgress, progress.Maximum); return; }
+        if (HasImage && string.IsNullOrWhiteSpace(ImagePath)) { Error = Strings.ImageRequired; return; }
+        Saving = true;
+        try
+        {
+            var result = RunSafely(() =>
             {
-                var content = NotificationProtocol.Copy(Selected.Content);
-                Draft = Draft with { Progress = content.Progress, Image = content.Image, Input = content.Input, Checklist = content.Checklist, Actions = content.Actions, Template = content.Template, Schedule = content.Schedule };
-            }
-            Draft.Lifetime = Sticky || Seconds == 0 ? NotificationLifetimes.UntilAcknowledged : new ExpiringLifetime(TimeSpan.FromSeconds(Seconds));
-            Draft.Silent = Silent;
-            NotificationRecurrence? recurrence = RecurrenceKey == nameof(Strings.Interval) ? new IntervalRecurrence(TimeSpan.FromMinutes(IntervalMinutes))
-                : RecurrenceKey == nameof(Strings.Weekly) ? new WeeklyRecurrence(WeeklyDays.ToArray())
-                : RecurrenceKey == nameof(Strings.Monthly) ? new MonthlyRecurrence(MonthlyDays.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Select(int.Parse).ToArray())
-                : Repetitions.Single(choice => choice.Key == RecurrenceKey).Policy;
-            if (ScheduleState != OriginalScheduleState || Selected.Key != OriginalContent)
-                Draft.Schedule = Target is not null || recurrence is not null || Selected.Content.Schedule is not null ? new() { At = Target is { } time ? new DateTimeOffset(time) : DateTimeOffset.Now, Recurrence = recurrence } : null;
-            if (Selected.Content.Progress is not null) Draft.Progress = (Draft.Progress ?? new()) with { Value = ProgressValue };
-            if (Selected.Content.Image is not null) Draft.Image = new(Uri.TryCreate(ImagePath, UriKind.Absolute, out var image) ? image : new Uri(Path.GetFullPath(ImagePath, AppPaths.Root)));
-            if (Selected.Content.Input is not null) Draft.Input ??= new() { Placeholder = Strings.InputPlaceholder };
-            if (Selected.Content.Template is not null) Draft.Template = new(string.IsNullOrWhiteSpace(TemplatePath) ? null : new FileInfo(Path.GetFullPath(TemplatePath, Path.Combine(AppPaths.UserData, AppConstants.Storage.TemplatesDirectory))));
-            string[] items = Items.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            if (Selected.Content.Checklist.Count > 0 && (Items != OriginalItems || Selected.Key != OriginalContent)) Draft.Checklist = items.Select(text => new ChecklistItem { Text = text }).ToList();
-            if (Selected.Content.Actions.Count > 0 && (Items != OriginalItems || Selected.Key != OriginalContent)) Draft.Actions = items.Select(text => (NotificationAction)new CallbackAction { Label = text }).ToList();
-            return Draft;
-        });
-        Error = result.Succeeded ? null : Strings.OperationFailed;
-        if (result.Succeeded) await Saved.InvokeAsync(result.Value);
+                var candidate = NotificationProtocol.Copy(Draft);
+                if (ContentChanged)
+                {
+                    var content = NotificationProtocol.Copy(Selected.Content);
+                    candidate = candidate with { Progress = content.Progress, Image = content.Image, Input = content.Input, Checklist = content.Checklist, Actions = content.Actions, Template = content.Template };
+                }
+                candidate.Checklist = NotificationProtocol.Copy(ChecklistDraft);
+                candidate.Actions = NotificationProtocol.Copy(ActionDraft);
+                if (Silent != OriginalSilent) candidate.Silent = Silent;
+                if (ScheduleState != OriginalScheduleState || ContentChanged)
+                {
+                    NotificationRecurrence? recurrence = RecurrenceKey == nameof(Strings.Interval) ? new IntervalRecurrence(TimeSpan.FromMinutes(IntervalMinutes))
+                        : RecurrenceKey == nameof(Strings.Weekly) ? new WeeklyRecurrence(WeeklyDays.ToArray())
+                        : RecurrenceKey == nameof(Strings.Monthly) ? new MonthlyRecurrence(monthDays)
+                        : Repetitions.Single(choice => choice.Key == RecurrenceKey).Policy;
+                    candidate.Schedule = ScheduleEnabled ? new() { At = Target is { } time ? new DateTimeOffset(time) : DateTimeOffset.Now, Recurrence = recurrence } : null;
+                }
+                if (HasProgress && (ContentChanged || ProgressValue != OriginalProgress)) candidate.Progress = (candidate.Progress ?? new()) with { Value = ProgressValue };
+                if (HasImage)
+                {
+                    var uri = Uri.TryCreate(ImagePath, UriKind.Absolute, out var parsed) ? parsed : new Uri(Path.GetFullPath(ImagePath, AppPaths.Root));
+                    if (uri.IsFile && !File.Exists(uri.LocalPath)) { Error = string.Format(Strings.FileUnavailable, uri.LocalPath); return null; }
+                    candidate.Image = new(uri);
+                }
+                if (Selected.Content.Input is not null) candidate.Input ??= new() { Placeholder = Strings.InputPlaceholder };
+                if (HasTemplate)
+                {
+                    FileInfo? file = string.IsNullOrWhiteSpace(TemplatePath) ? null : new(Path.GetFullPath(TemplatePath, Path.Combine(AppPaths.UserData, AppConstants.Storage.TemplatesDirectory)));
+                    if (file is not null && !file.Exists) { Error = string.Format(Strings.FileUnavailable, file.FullName); return null; }
+                    candidate.Template = new(file);
+                }
+                if (ContentChanged || Sticky != OriginalSticky || Seconds != OriginalSeconds || (AppConstants.Notifications.ResolveLifetime(candidate) is AcknowledgedLifetime) != Sticky) candidate.Lifetime = Sticky ? NotificationLifetimes.UntilAcknowledged : new ExpiringLifetime(TimeSpan.FromSeconds(Seconds));
+                return candidate;
+            });
+            if (!result.Succeeded) Error = Strings.OperationFailed;
+            else if (result.Value is not null) await Saved.InvokeAsync(result.Value);
+        }
+        finally { Saving = false; }
     }
+
+    /// <summary>Replaces a theme only after an explicit selector change; an embedded per-request theme remains intact on ordinary saves.</summary>
+    void SelectTheme(ChangeEventArgs args)
+    {
+        string? name = args.Value?.ToString();
+        Draft.Theme = string.IsNullOrWhiteSpace(name) ? null : NotificationProtocol.Copy(Request.Theme is { } supplied && supplied.Name == name && !ThemeCatalog.Themes.Any(theme => theme.Name == name) ? supplied : ThemeCatalog.Get(name, required: true));
+    }
+    /// <summary>Updates the weekday selection represented in the schedule draft.</summary>
     void SelectDay(DayOfWeek day, ChangeEventArgs args) { if (args.Value is true) WeeklyDays.Add(day); else WeeklyDays.Remove(day); }
+    /// <summary>Adds a callback button or removes exactly the row selected by its existing action identity.</summary>
+    async Task ChangeAction(string? id = null)
+    {
+        if (id is null) ActionDraft.Add(new CallbackAction { Label = Strings.Confirm }); else ActionDraft.RemoveAll(action => action.Id == id);
+        await MarkDirty();
+    }
+    /// <summary>Adds a checklist item or removes exactly the selected item without remapping any surviving identity.</summary>
+    async Task ChangeChecklist(string? id = null)
+    {
+        if (id is null) ChecklistDraft.Add(new() { Text = Strings.Confirm }); else ChecklistDraft.RemoveAll(item => item.Id == id);
+        await MarkDirty();
+    }
+    /// <summary>Identifies an existing action's actual effect beside its editable label.</summary>
+    static string? ActionHint(NotificationAction action) => action switch
+    {
+        OpenUriAction link => link.Target.ToString(), RunCommandAction command => command.StartInfo.FileName,
+        ReplyAction => Strings.Reply, SnoozeAction snooze => string.Format(Strings.MinuteFormat, snooze.Delay.TotalMinutes), _ => null
+    };
+    /// <summary>Lets the containing panel protect this draft before navigation or closing.</summary>
+    Task MarkDirty() => DirtyChanged.InvokeAsync(true);
 }

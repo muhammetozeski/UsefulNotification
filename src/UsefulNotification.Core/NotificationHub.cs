@@ -151,6 +151,13 @@ internal sealed class NotificationHub : IAsyncDisposable
                     break;
                 case NotificationOperation.Clear:
                     Entries.RemoveAll(item => item.Current.Result is not null); response = new() { Accepted = true }; break;
+                case NotificationOperation.ClearHistory:
+                    foreach (var history in Entries.Where(item => command.Id is null || item.Id == command.Id).ToArray())
+                    {
+                        history.Occurrences.RemoveAll(item => item.Result is not null && (command.OccurrenceId is null || item.Id == command.OccurrenceId));
+                        if (history.Occurrences.Count == 0) Entries.Remove(history);
+                    }
+                    response = new() { Accepted = true }; break;
                 case NotificationOperation.Delete:
                     if (entry?.Current.Action?.Status == ActionStatus.Pending) throw new InvalidOperationException("An external action is in progress.");
                     Entries.RemoveAll(item => item.Id == command.Id); response = new() { Accepted = true }; break;
@@ -250,7 +257,7 @@ internal sealed class NotificationHub : IAsyncDisposable
             var entry = Entries.Single(item => item.Id == id);
             if (hover is not null)
             {
-                if (entry.Current.Result is not null || occurrenceId is { } hoveredOccurrence && entry.Current.Id != hoveredOccurrence || revision is { } hoveredRevision && entry.Current.ContentRevision != hoveredRevision) return;
+                if (entry.Current.Result is not null || occurrenceId is { } hoveredOccurrence && entry.Current.Id != hoveredOccurrence || hover.Value && revision is { } hoveredRevision && entry.Current.ContentRevision != hoveredRevision) return;
                 if (hover.Value) Hovered.Add(id); else Hovered.Remove(id);
                 Pause(entry.Current, !entry.Current.InViewport || Configuration.PauseOnHover && Hovered.Contains(id));
                 return;
@@ -394,7 +401,8 @@ internal sealed class NotificationHub : IAsyncDisposable
         lock (Gate)
         {
             var candidate = NotificationProtocol.Copy(preferences ?? Preferences);
-            if (candidate.Sounds.Count == 0 || candidate.Sounds.Any(sound => sound.Steps.Any(step => step.Duration < TimeSpan.Zero || step.Pause < TimeSpan.Zero || step.Frequency < 37 || step.Frequency > 32767))) throw new ArgumentException("Invalid sound preset.");
+            if (preferences is not null) candidate.PanelBounds = Preferences.PanelBounds;
+            if (candidate.Sounds.Count == 0 || candidate.Sounds.Any(sound => sound.Steps.Any(step => !AppConstants.Audio.Frequency.IsValid(step.Frequency) || !AppConstants.Audio.DurationMilliseconds.IsValid(step.Duration.TotalMilliseconds) || !AppConstants.Audio.PauseMilliseconds.IsValid(step.Pause.TotalMilliseconds)))) throw new ArgumentException("Invalid sound preset.");
             PortableStore.Write(AppConstants.Storage.PreferencesFile, candidate); Preferences = candidate;
         }
     }

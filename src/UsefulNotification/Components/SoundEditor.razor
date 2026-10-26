@@ -1,66 +1,201 @@
-<div class="sound-editor">
-    <div class="row"><select value="@Selected.Id" @onchange="Select">@foreach (var sound in Draft.Sounds) { <option value="@sound.Id">@sound.Name</option> }</select><button @onclick="Add">@Strings.New</button><button @onclick="Duplicate">@Strings.Duplicate</button><button @onclick="Delete">@Strings.Delete</button></div>
-    <label class="field">@Strings.Name<input @bind="Selected.Name" /></label>
-    <label class="field">@Strings.SoundFile<input @bind="AudioPath" /></label>
-    @for (int index = 0; index < Selected.Steps.Count; index++)
-    {
-        int toneIndex = index;
-        ToneStep step = Selected.Steps[index];
-        <div class="tone">
-            <label class="field">@Strings.Frequency<input type="number" value="@step.Frequency" @onchange="args => ChangeTone(toneIndex, ToneField.Frequency, args)" /></label>
-            <label class="field">@Strings.Milliseconds<input type="number" value="@step.Duration.TotalMilliseconds" @onchange="args => ChangeTone(toneIndex, ToneField.Duration, args)" /></label>
-            <label class="field">@Strings.Pause<input type="number" value="@step.Pause.TotalMilliseconds" @onchange="args => ChangeTone(toneIndex, ToneField.Pause, args)" /></label>
-            <div class="row"><button @onclick="() => Move(toneIndex, -1)">@Strings.MoveUp</button><button @onclick="() => Move(toneIndex, 1)">@Strings.MoveDown</button><button @onclick="() => Selected.Steps.RemoveAt(toneIndex)">@Strings.Delete</button></div>
+@implements IDisposable
+<div class="sound-editor" @oninput="MarkDirty" @onchange="MarkDirty">
+    <fieldset class="form-section" disabled="@Saving">
+        <legend>@Strings.SoundPreset</legend>
+        <div class="form-grid">
+            <label class="field">@Strings.SoundPreset<select value="@Selected.Id" @onchange="Select">@foreach (var sound in Draft.Sounds) { <option value="@sound.Id">@sound.Name</option> }</select></label>
+            <label class="field">@Strings.Name<input @bind="Selected.Name" /></label>
         </div>
+        <div class="actions"><button type="button" @onclick="Add">@Strings.NewSound</button><button type="button" disabled="@CurrentToneInvalid" @onclick="Duplicate">@Strings.Duplicate</button><button type="button" class="danger" disabled="@(Draft.Sounds.Count <= 1)" @onclick="Delete">@Strings.DeleteSound</button></div>
+    </fieldset>
+    <fieldset class="form-section" disabled="@Saving">
+        <legend>@Strings.SoundFile</legend>
+        <label class="field">@Strings.SoundFile<input @bind="AudioPath" /></label>
+        @if (!string.IsNullOrWhiteSpace(AudioPath)) { <small class="muted">@Strings.AudioFileOverridesTones</small> }
+    </fieldset>
+    @if (string.IsNullOrWhiteSpace(AudioPath))
+    {
+        <fieldset class="form-section" disabled="@Saving">
+            <legend>@Strings.ToneSequence</legend>
+            @for (int index = 0; index < Selected.Steps.Count; index++)
+            {
+                int toneIndex = index;
+                ToneStep step = Selected.Steps[index];
+                <div class="tone">
+                    <label class="field">@Strings.Frequency<input type="number" min="@AppConstants.Audio.Frequency.Minimum" max="@AppConstants.Audio.Frequency.Maximum" value="@step.Frequency" @onchange="args => ChangeTone(toneIndex, ToneField.Frequency, args)" /></label>
+                    <label class="field">@Strings.Milliseconds<input type="number" min="@AppConstants.Audio.DurationMilliseconds.Minimum" max="@AppConstants.Audio.DurationMilliseconds.Maximum" value="@Number(step.Duration.TotalMilliseconds)" @onchange="args => ChangeTone(toneIndex, ToneField.Duration, args)" /></label>
+                    <label class="field">@Strings.Pause<input type="number" min="@AppConstants.Audio.PauseMilliseconds.Minimum" max="@AppConstants.Audio.PauseMilliseconds.Maximum" value="@Number(step.Pause.TotalMilliseconds)" @onchange="args => ChangeTone(toneIndex, ToneField.Pause, args)" /></label>
+                    <div class="tone-actions"><button type="button" disabled="@(toneIndex == 0 || CurrentToneInvalid)" @onclick="() => Move(toneIndex, -1)">@Strings.MoveUp</button><button type="button" disabled="@(toneIndex == Selected.Steps.Count - 1 || CurrentToneInvalid)" @onclick="() => Move(toneIndex, 1)">@Strings.MoveDown</button><button type="button" class="danger" @onclick="() => RemoveTone(toneIndex)">@Strings.Delete</button></div>
+                </div>
+            }
+            <button type="button" @onclick="AddTone">@Strings.AddTone</button>
+        </fieldset>
     }
-    <div class="actions"><button @onclick="() => Selected.Steps.Add(AppConstants.Notifications.Sound.Steps[0])">@Strings.AddTone</button><button @onclick="() => App.Host.PlaySoundAsync(Selected)">@Strings.TestSound</button><button class="primary" @onclick="Save">@Strings.Save</button></div>
-    @if (Error is not null) { <p>@Error</p> }
+    @if (Error is not null) { <p class="error" role="alert">@Error</p> }
+    @if (Status is not null) { <p class="status" role="status">@Status</p> }
+    <div class="actions"><button type="button" class="primary" disabled="@Saving" @onclick="Save">@(Saving ? Strings.Saving : Strings.Save)</button><button type="button" disabled="@Saving" @onclick="Preview">@(Playing ? Strings.Cancel : Strings.TestSound)</button><button type="button" class="secondary" disabled="@Saving" @onclick="Reset">@Strings.ResetChanges</button></div>
 </div>
 
 @code {
-    /// <summary>Identifies an editable part of one complete tone step.</summary>
+    [Parameter] public EventCallback<bool> DirtyChanged { get; set; }
+    /// <summary>Identifies a numeric part of an existing tone.</summary>
     enum ToneField { Frequency, Duration, Pause }
     DesktopPreferences Draft = null!;
     SoundPattern Selected = null!;
-    string AudioPath { get => Selected.AudioFile?.FullName ?? string.Empty; set => Selected.AudioFile = string.IsNullOrWhiteSpace(value) ? null : new FileInfo(Path.GetFullPath(value, AppPaths.Root)); }
+    readonly Dictionary<Guid, string> AudioPaths = [];
+    readonly HashSet<(Guid Sound, int Index, ToneField Field)> InvalidToneFields = [];
+    bool CurrentToneInvalid => InvalidToneFields.Any(invalidField => invalidField.Sound == Selected.Id);
+    string AudioPath { get => AudioPaths.GetValueOrDefault(Selected.Id, Selected.AudioFile?.FullName ?? string.Empty); set => AudioPaths[Selected.Id] = value; }
     string? Error;
+    string? Status;
+    bool Saving;
+    bool Playing;
+    CancellationTokenSource? PreviewCancellation;
 
-    /// <summary>Selects the configured preset without creating another settings system.</summary>
-    protected override void OnInitialized() { Draft = NotificationProtocol.Copy(App.Hub.Preferences); Selected = Draft.SelectedSound; }
+    /// <summary>Starts with an independent preferences draft; only Save replaces runtime preferences.</summary>
+    protected override void OnInitialized() => LoadDraft();
 
-    /// <summary>Selects one existing sound.</summary>
-    /// <param name="args">The chosen preset name.</param>
-    void Select(ChangeEventArgs args) => Selected = Draft.Sounds.Single(sound => sound.Id == Guid.Parse(args.Value?.ToString() ?? throw new ArgumentException("A sound identity is required.")));
+    /// <summary>Rebuilds the draft from committed preferences and discards temporary path edits.</summary>
+    void LoadDraft()
+    {
+        Draft = NotificationProtocol.Copy(App.Hub.Preferences); Selected = Draft.SelectedSound;
+        AudioPaths.Clear(); InvalidToneFields.Clear(); Error = null; Status = null;
+    }
 
-    /// <summary>Creates an editable sound with the default tone sequence.</summary>
-    void Add() { Selected = new() { Name = Strings.New, Steps = [.. AppConstants.Notifications.Sound.Steps] }; Draft.Sounds.Add(Selected); }
+    /// <summary>Selects a sound by its identity so duplicate editable names remain distinguishable.</summary>
+    void Select(ChangeEventArgs args)
+    {
+        PreviewCancellation?.Cancel();
+        if (Guid.TryParse(args.Value?.ToString(), out Guid id) && Draft.Sounds.FirstOrDefault(sound => sound.Id == id) is { } sound) Selected = sound;
+        Status = null; Error = null;
+    }
 
-    /// <summary>Copies the selected sequence as an independent preset.</summary>
-    void Duplicate() { Selected = Selected with { Id = Guid.NewGuid(), Name = Selected.Name + " " + Strings.Duplicate, Steps = [.. Selected.Steps] }; Draft.Sounds.Add(Selected); }
+    /// <summary>Adds a new sound with an independent copy of the default tone sequence.</summary>
+    async Task Add()
+    {
+        PreviewCancellation?.Cancel();
+        Selected = new() { Name = Strings.NewSound, Steps = [.. AppConstants.Notifications.Sound.Steps] };
+        Draft.Sounds.Add(Selected); await MarkDirty();
+    }
 
-    /// <summary>Removes a preset while preserving at least one selectable sound.</summary>
-    void Delete() { if (Draft.Sounds.Count <= 1) return; Draft.Sounds.Remove(Selected); Selected = Draft.Sounds[0]; }
+    /// <summary>Copies the actual selected sound and its unfinished file-path text.</summary>
+    async Task Duplicate()
+    {
+        PreviewCancellation?.Cancel();
+        string path = AudioPath;
+        Selected = Selected with { Id = Guid.NewGuid(), Name = Selected.Name + " " + Strings.Duplicate, Steps = [.. Selected.Steps] };
+        Draft.Sounds.Add(Selected); AudioPath = path; await MarkDirty();
+    }
 
-    /// <summary>Edits one field while keeping duration and pause represented as TimeSpan values.</summary>
-    /// <param name="index">The tone's current position.</param>
-    /// <param name="field">The field being edited.</param>
-    /// <param name="args">The entered number.</param>
+    /// <summary>Removes this draft preset while retaining at least one sound.</summary>
+    async Task Delete()
+    {
+        if (Draft.Sounds.Count <= 1) return;
+        PreviewCancellation?.Cancel();
+        AudioPaths.Remove(Selected.Id); InvalidToneFields.RemoveWhere(field => field.Sound == Selected.Id); Draft.Sounds.Remove(Selected); Selected = Draft.Sounds[0]; await MarkDirty();
+    }
+
+    /// <summary>Edits a valid native tone field; invalid input stays visible with an actionable message.</summary>
     void ChangeTone(int index, ToneField field, ChangeEventArgs args)
     {
-        if (!double.TryParse(args.Value?.ToString(), out double value)) { Error = Strings.OperationFailed; return; }
+        var key = (Selected.Id, index, field);
+        if (!double.TryParse(args.Value?.ToString(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double value) || !double.IsFinite(value)) { InvalidToneFields.Add(key); Error = Strings.InvalidTone; return; }
+        var range = field switch { ToneField.Frequency => AppConstants.Audio.Frequency, ToneField.Duration => AppConstants.Audio.DurationMilliseconds, _ => AppConstants.Audio.PauseMilliseconds };
+        if (value < Convert.ToDouble(range.Minimum) || value > Convert.ToDouble(range.Maximum) || field == ToneField.Frequency && value != Math.Truncate(value)) { InvalidToneFields.Add(key); Error = Strings.InvalidTone; return; }
+        InvalidToneFields.Remove(key);
         ToneStep step = Selected.Steps[index];
         Selected.Steps[index] = field switch { ToneField.Frequency => step with { Frequency = (int)value }, ToneField.Duration => step with { Duration = TimeSpan.FromMilliseconds(value) }, _ => step with { Pause = TimeSpan.FromMilliseconds(value) } };
+        Error = CurrentToneInvalid ? Strings.InvalidTone : null; Status = null;
     }
 
-    /// <summary>Reorders one step in the sequence.</summary>
-    /// <param name="index">The source position.</param>
-    /// <param name="direction">The relative target position.</param>
-    void Move(int index, int direction) { int target = index + direction; if (target >= 0 && target < Selected.Steps.Count) (Selected.Steps[index], Selected.Steps[target]) = (Selected.Steps[target], Selected.Steps[index]); }
-
-    /// <summary>Persists presets and selects this sequence for notifications.</summary>
-    void Save()
+    /// <summary>Adds the shared default tone value to this draft sequence.</summary>
+    async Task AddTone() { Selected.Steps.Add(AppConstants.Notifications.Sound.Steps[0]); await MarkDirty(); }
+    /// <summary>Removes a tone from the unfinished sequence and enables the navigation guard.</summary>
+    async Task RemoveTone(int index)
     {
-        var result = RunSafely(() => { Draft.SelectedSound = Selected; App.Hub.SavePreferences(Draft); });
-        Error = result.Succeeded ? null : Strings.OperationFailed;
+        var shifted = InvalidToneFields.Where(field => field.Sound == Selected.Id && field.Index > index).ToArray();
+        InvalidToneFields.RemoveWhere(field => field.Sound == Selected.Id && field.Index >= index);
+        foreach (var field in shifted) InvalidToneFields.Add((field.Sound, field.Index - 1, field.Field));
+        Selected.Steps.RemoveAt(index); Error = CurrentToneInvalid ? Strings.InvalidTone : null; await MarkDirty();
     }
+
+    /// <summary>Changes the order only where a destination exists.</summary>
+    async Task Move(int index, int direction)
+    {
+        int target = index + direction;
+        if (target < 0 || target >= Selected.Steps.Count) return;
+        (Selected.Steps[index], Selected.Steps[target]) = (Selected.Steps[target], Selected.Steps[index]); await MarkDirty();
+    }
+
+    /// <summary>Validates a detached sound for playback or persistence without publishing editor state.</summary>
+    SoundPattern? Prepare(SoundPattern source, bool requireName = true)
+    {
+        var sound = NotificationProtocol.Copy(source);
+        if (requireName && string.IsNullOrWhiteSpace(sound.Name)) { Error = Strings.SoundNameRequired; return null; }
+        string path = AudioPaths.GetValueOrDefault(source.Id, source.AudioFile?.FullName ?? string.Empty);
+        if (!string.IsNullOrWhiteSpace(path))
+        {
+            var file = new FileInfo(Path.GetFullPath(path, AppPaths.Root));
+            if (!file.Exists) { Error = string.Format(Strings.FileUnavailable, file.FullName); return null; }
+            sound.AudioFile = file;
+        }
+        else
+        {
+            sound.AudioFile = null;
+            if (sound.Steps.Count == 0 || sound.Steps.Any(step => !AppConstants.Audio.Frequency.IsValid(step.Frequency) || !AppConstants.Audio.DurationMilliseconds.IsValid(step.Duration.TotalMilliseconds) || !AppConstants.Audio.PauseMilliseconds.IsValid(step.Pause.TotalMilliseconds)))
+            { Error = Strings.InvalidTone; return null; }
+        }
+        return sound;
+    }
+
+    /// <summary>Plays one detached preview; another press cancels it instead of queueing repeated sounds.</summary>
+    async Task Preview()
+    {
+        if (Playing) { PreviewCancellation?.Cancel(); return; }
+        if (CurrentToneInvalid && string.IsNullOrWhiteSpace(AudioPath)) { Error = Strings.InvalidTone; return; }
+        Error = null; Status = null;
+        var prepared = RunSafely(() => Prepare(Selected, requireName: false));
+        if (!prepared.Succeeded) { Error = Strings.OperationFailed; return; }
+        if (prepared.Value is not { } sound) return;
+        Playing = true;
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(App.Hub.Lifetime);
+        PreviewCancellation = cancellation;
+        try { Status = Strings.TestingSound; await App.Host.PlaySoundAsync(sound, cancellation.Token); }
+        finally { Playing = false; PreviewCancellation = null; Status = null; }
+    }
+
+    /// <summary>Commits all validated draft presets and selects the currently displayed one for notifications.</summary>
+    async Task Save()
+    {
+        if (Saving) return;
+        if (InvalidToneFields.Any(invalidField => string.IsNullOrWhiteSpace(AudioPaths.GetValueOrDefault(invalidField.Sound, Draft.Sounds.Single(sound => sound.Id == invalidField.Sound).AudioFile?.FullName ?? string.Empty)))) { Error = Strings.InvalidTone; return; }
+        Saving = true; Error = null; Status = null;
+        try
+        {
+            var result = RunSafely(() =>
+            {
+                var candidate = NotificationProtocol.Copy(Draft);
+                var sounds = new List<SoundPattern>();
+                foreach (var source in Draft.Sounds)
+                {
+                    if (Prepare(source) is not { } sound) return false;
+                    sounds.Add(sound);
+                }
+                candidate.Sounds = sounds; candidate.SelectedSoundId = Selected.Id;
+                App.Hub.SavePreferences(candidate); return true;
+            });
+            if (!result.Succeeded) Error = Strings.OperationFailed;
+            else if (result.Value) { Status = Strings.SoundsSaved; await DirtyChanged.InvokeAsync(false); }
+        }
+        finally { Saving = false; }
+    }
+
+    /// <summary>Discards the complete uncommitted sound draft, including names, paths and reordered tones.</summary>
+    async Task Reset() { PreviewCancellation?.Cancel(); LoadDraft(); await DirtyChanged.InvokeAsync(false); }
+    /// <summary>Reports unfinished edits to the panel's navigation guard.</summary>
+    Task MarkDirty() { Status = null; return DirtyChanged.InvokeAsync(true); }
+    /// <summary>Formats numeric HTML input values independently of the selected display language.</summary>
+    static string Number(double value) => value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    /// <summary>Stops a preview when navigation disposes this editor.</summary>
+    public void Dispose() => PreviewCancellation?.Cancel();
 }

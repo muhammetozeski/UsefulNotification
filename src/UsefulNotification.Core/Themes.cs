@@ -69,8 +69,8 @@ public sealed record NotificationFrame
 {
     /// <summary>Independent border widths in CSS pixels; defaults to one on top/right/bottom and five on the left.</summary>
     public BorderThickness Thickness { get; set; } = new();
-    /// <summary>HTML corner radius in CSS pixels, initially 3.</summary>
-    public double CornerRadius { get; set; } = 3;
+    /// <summary>HTML corner radius in CSS pixels, initially 0.</summary>
+    public double CornerRadius { get; set; } = 0;
     /// <summary>HTML border stroke pattern, initially Solid.</summary>
     public BorderPattern Pattern { get; set; } = BorderPattern.Solid;
     /// <summary>Border edges using AccentColor or semantic level color, initially Left.</summary>
@@ -93,24 +93,26 @@ public sealed record BorderThickness
 /// <summary>Defines surface and semantic colors; no CSS variable is a second source of truth.</summary>
 public sealed record ThemePalette
 {
+    /// <summary>Modal backdrop color, initially translucent black.</summary>
+    public Color Overlay { get; set; } = Color.FromArgb(160, Color.Black);
     /// <summary>Page and card background, initially the dark preset surface.</summary>
-    public Color Background { get; set; } = ColorTranslator.FromHtml("#18191c");
+    public Color Background { get; set; } = ColorTranslator.FromHtml("#191919");
     /// <summary>Secondary control surface color.</summary>
-    public Color Surface { get; set; } = ColorTranslator.FromHtml("#222428");
+    public Color Surface { get; set; } = ColorTranslator.FromHtml("#242424");
     /// <summary>Unaccented border and divider color.</summary>
-    public Color Border { get; set; } = ColorTranslator.FromHtml("#3a3d43");
+    public Color Border { get; set; } = ColorTranslator.FromHtml("#393939");
     /// <summary>Primary foreground color.</summary>
-    public Color Text { get; set; } = ColorTranslator.FromHtml("#f4f5f7");
+    public Color Text { get; set; } = ColorTranslator.FromHtml("#f2f2f2");
     /// <summary>Secondary foreground color for metadata and timestamps.</summary>
-    public Color Muted { get; set; } = ColorTranslator.FromHtml("#a7aeb9");
+    public Color Muted { get; set; } = ColorTranslator.FromHtml("#a8a8a8");
     /// <summary>Fallback accent color when no level mapping or explicit frame accent applies.</summary>
-    public Color Accent { get; set; } = ColorTranslator.FromHtml("#4d97ff");
+    public Color Accent { get; set; } = ColorTranslator.FromHtml("#3478ed");
     /// <summary>Text foreground for accent-filled controls.</summary>
     public Color AccentText { get; set; } = ColorTranslator.FromHtml("#ffffff");
     /// <summary>Editable semantic color map. Missing level entries fall back to Accent.</summary>
     public Dictionary<NotificationLevel, Color> Levels { get; set; } = new()
     {
-        [NotificationLevel.Normal] = ColorTranslator.FromHtml("#939eac"), [NotificationLevel.Info] = ColorTranslator.FromHtml("#4d97ff"), [NotificationLevel.Success] = ColorTranslator.FromHtml("#49b58c"),
+        [NotificationLevel.Normal] = ColorTranslator.FromHtml("#939eac"), [NotificationLevel.Info] = ColorTranslator.FromHtml("#3478ed"), [NotificationLevel.Success] = ColorTranslator.FromHtml("#49b58c"),
         [NotificationLevel.Warning] = ColorTranslator.FromHtml("#d5aa4c"), [NotificationLevel.Error] = ColorTranslator.FromHtml("#e06b70"), [NotificationLevel.Urgent] = ColorTranslator.FromHtml("#e34c58"),
         [NotificationLevel.Deadline] = ColorTranslator.FromHtml("#d98b55"), [NotificationLevel.Meeting] = ColorTranslator.FromHtml("#8496da"), [NotificationLevel.Health] = ColorTranslator.FromHtml("#69b8aa"),
         [NotificationLevel.Break] = ColorTranslator.FromHtml("#78ad79"), [NotificationLevel.Personal] = ColorTranslator.FromHtml("#b28ac7")
@@ -121,8 +123,8 @@ public sealed record ThemeTypography
 {
     /// <summary>CSS font-family fallback list, initially Segoe UI, Arial, sans-serif.</summary>
     public string Family { get; set; } = "Segoe UI, Arial, sans-serif";
-    /// <summary>Body text size in CSS pixels, initially 14.</summary>
-    public int Body { get; set; } = 14;
+    /// <summary>Body text size in CSS pixels, initially 13.</summary>
+    public int Body { get; set; } = 13;
     /// <summary>Metadata text size in CSS pixels, initially 12.</summary>
     public int Small { get; set; } = 12;
     /// <summary>Panel heading size in CSS pixels, initially 21.</summary>
@@ -141,24 +143,28 @@ public sealed record ThemeTypography
 /// <summary>Defines the layout measurements as one editable theme object.</summary>
 public sealed record ThemeLayout
 {
+    /// <summary>Invisible HTML sizing-edge target width in CSS pixels, initially 5.</summary>
+    public int ResizeGrip { get; set; } = 5;
+    /// <summary>Width below which panel forms use one column, in CSS pixels, initially 720.</summary>
+    public int NarrowPanel { get; set; } = 720;
     /// <summary>Tight spacing in CSS pixels, initially 4.</summary>
     public int CompactGap { get; set; } = 4;
     /// <summary>Standard spacing in CSS pixels, initially 8.</summary>
     public int Gap { get; set; } = 8;
-    /// <summary>Card/control padding in CSS pixels, initially 16.</summary>
-    public int Padding { get; set; } = 16;
+    /// <summary>Card/control padding in CSS pixels, initially 12.</summary>
+    public int Padding { get; set; } = 12;
     /// <summary>Panel page padding in CSS pixels, initially 20.</summary>
     public int PagePadding { get; set; } = 20;
     /// <summary>General control border width in CSS pixels, initially 1.</summary>
     public int Border { get; set; } = 1;
     /// <summary>Default accent strip width in CSS pixels, initially 5.</summary>
     public int AccentBorder { get; set; } = 5;
-    /// <summary>General control corner radius in CSS pixels, initially 3.</summary>
-    public int Radius { get; set; } = 3;
-    /// <summary>Button minimum height in CSS pixels, initially 34.</summary>
-    public int ButtonHeight { get; set; } = 34;
-    /// <summary>Panel header height in CSS pixels, initially 46.</summary>
-    public int HeaderHeight { get; set; } = 46;
+    /// <summary>General control corner radius in CSS pixels, initially 0.</summary>
+    public int Radius { get; set; } = 0;
+    /// <summary>Button minimum height in CSS pixels, initially 30.</summary>
+    public int ButtonHeight { get; set; } = 30;
+    /// <summary>Panel header height in CSS pixels, initially 40.</summary>
+    public int HeaderHeight { get; set; } = 40;
     /// <summary>Standard icon dimension in CSS pixels, initially 22.</summary>
     public int IconSize { get; set; } = 22;
     /// <summary>Panel navigation width in CSS pixels, initially 170.</summary>
@@ -167,7 +173,7 @@ public sealed record ThemeLayout
     public int ImageHeight { get; set; } = 190;
     /// <summary>Progress track height in CSS pixels, initially 6.</summary>
     public int ProgressHeight { get; set; } = 6;
-    /// <summary>Initial multiline reply row count, initially 3.</summary>
+    /// <summary>Initial multiline reply row count, initially 0.</summary>
     public int ReplyRows { get; set; } = 3;
 }
 /// <summary>Exposes complete mutable theme objects directly to C# callers.</summary>
@@ -187,14 +193,14 @@ public static class NotificationThemes
     public static NotificationTheme Amber { get; set; } = new() { Name = nameof(Amber) };
     /// <summary>Mutable dark preset with a red accent.</summary>
     public static NotificationTheme Crimson { get; set; } = new() { Name = nameof(Crimson), Palette = new() { Accent = ColorTranslator.FromHtml("#dc6571") } };
-    /// <summary>Mutable information preset with all HTML border edges accented.</summary>
-    public static NotificationTheme Info { get; set; } = new() { Name = nameof(Info), DefaultLevel = NotificationLevel.Info, Frame = new() { AccentEdges = BorderEdges.All } };
-    /// <summary>Mutable warning preset with all HTML border edges accented and a thicker left edge.</summary>
-    public static NotificationTheme Warn { get; set; } = new() { Name = nameof(Warn), DefaultLevel = NotificationLevel.Warning, Frame = new() { AccentEdges = BorderEdges.All, Thickness = new() { Top = 2, Right = 2, Bottom = 2, Left = 6 } } };
-    /// <summary>Mutable error preset with all HTML border edges accented and a thicker left edge.</summary>
-    public static NotificationTheme Error { get; set; } = new() { Name = nameof(Error), DefaultLevel = NotificationLevel.Error, Frame = new() { AccentEdges = BorderEdges.All, Thickness = new() { Top = 2, Right = 2, Bottom = 2, Left = 6 } } };
-    /// <summary>Mutable success preset with all HTML border edges accented.</summary>
-    public static NotificationTheme Happy { get; set; } = new() { Name = nameof(Happy), DefaultLevel = NotificationLevel.Success, Frame = new() { AccentEdges = BorderEdges.All } };
+    /// <summary>Mutable information preset with a single semantic accent strip.</summary>
+    public static NotificationTheme Info { get; set; } = new() { Name = nameof(Info), DefaultLevel = NotificationLevel.Info, Frame = new() };
+    /// <summary>Mutable warning preset with a single semantic accent strip.</summary>
+    public static NotificationTheme Warn { get; set; } = new() { Name = nameof(Warn), DefaultLevel = NotificationLevel.Warning, Frame = new() };
+    /// <summary>Mutable error preset with a single semantic accent strip.</summary>
+    public static NotificationTheme Error { get; set; } = new() { Name = nameof(Error), DefaultLevel = NotificationLevel.Error, Frame = new() };
+    /// <summary>Mutable success preset with a single semantic accent strip.</summary>
+    public static NotificationTheme Happy { get; set; } = new() { Name = nameof(Happy), DefaultLevel = NotificationLevel.Success, Frame = new() };
     /// <summary>Mutable black/white preset with a yellow accent.</summary>
     public static NotificationTheme HighContrast { get; set; } = new() { Name = nameof(HighContrast), Palette = new() { Background = ColorTranslator.FromHtml("#000000"), Surface = ColorTranslator.FromHtml("#000000"), Border = ColorTranslator.FromHtml("#ffffff"), Text = ColorTranslator.FromHtml("#ffffff"), Muted = ColorTranslator.FromHtml("#ffffff"), Accent = ColorTranslator.FromHtml("#ffff00"), AccentText = ColorTranslator.FromHtml("#000000") } };
     /// <summary>A new list containing the actual shared preset objects. Editing a preset affects later sends; already accepted requests own their snapshots.</summary>
@@ -205,7 +211,11 @@ public static class NotificationThemes
     {
         Emerald.Palette.Accent = Dark.Palette.Levels[NotificationLevel.Success];
         Amber.Palette.Accent = Dark.Palette.Levels[NotificationLevel.Warning];
-        foreach (var theme in new[] { Info, Warn, Error, Happy }) theme.Frame.AccentColor = theme.Palette.Levels[theme.DefaultLevel!.Value];
+        foreach (var theme in new[] { Info, Warn, Error, Happy })
+        {
+            theme.Palette.Accent = theme.Palette.Levels[theme.DefaultLevel!.Value]; theme.Frame.AccentColor = theme.Palette.Accent;
+            if (theme != Info) theme.Palette.AccentText = Dark.Palette.Background;
+        }
     }
 }
 /// <summary>Exposes ready-to-use sound sequences without names or numeric preset indexes.</summary>

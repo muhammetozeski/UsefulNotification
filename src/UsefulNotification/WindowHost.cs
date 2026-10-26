@@ -34,7 +34,28 @@ internal sealed class WindowHost
     int ToastHeight = AppConstants.Windows.Toast.Height;
     static NativeAppearance Chrome = new();
     static StartupRegistration Startup = new();
+    WindowInteraction? Interaction;
+    /// <summary>Tracks the held-pointer origin and original window rectangle, following ShowPicOnly's delta-based interaction.</summary>
+    sealed record WindowInteraction(uint Hit, System.Drawing.Point Cursor, System.Drawing.Rectangle Bounds)
+    {
+        public System.Drawing.Point LastCursor = Cursor;
+    }
     public bool IsPanelVisible => PanelWanted;
+    public event Action? CloseRequested;
+    public List<(int Index, string Name)> Monitors
+    {
+        get
+        {
+            var displays = DisplayArea.FindAll();
+            var choices = new List<(int, string)>();
+            for (int index = 0; index < displays.Count; index++)
+            {
+                var area = displays[index].WorkArea;
+                choices.Add((index + 1, string.Format(Localization.Strings.MonitorNumber, index + 1, area.Width, area.Height)));
+            }
+            return choices;
+        }
+    }
     public double ToastContentScale => AppConstants.Windows.ToastSizing == DisplaySizing.PhysicalPixels && Toast is not null
         ? PInvoke.USER_DEFAULT_SCREEN_DPI / (double)PInvoke.GetDpiForWindow(Handle(Toast)) : 1;
 
@@ -43,6 +64,7 @@ internal sealed class WindowHost
     {
         public WINDOW_STYLE FrameStyles = WINDOW_STYLE.WS_CAPTION | WINDOW_STYLE.WS_BORDER | WINDOW_STYLE.WS_DLGFRAME | WINDOW_STYLE.WS_THICKFRAME | WINDOW_STYLE.WS_SYSMENU | WINDOW_STYLE.WS_MINIMIZEBOX | WINDOW_STYLE.WS_MAXIMIZEBOX;
         public WINDOW_EX_STYLE EdgeStyles = WINDOW_EX_STYLE.WS_EX_WINDOWEDGE | WINDOW_EX_STYLE.WS_EX_CLIENTEDGE | WINDOW_EX_STYLE.WS_EX_STATICEDGE | WINDOW_EX_STYLE.WS_EX_DLGMODALFRAME;
+        public HashSet<uint> InteractionAreas = [PInvoke.HTCAPTION, PInvoke.HTLEFT, PInvoke.HTRIGHT, PInvoke.HTTOP, PInvoke.HTBOTTOM, PInvoke.HTTOPLEFT, PInvoke.HTTOPRIGHT, PInvoke.HTBOTTOMLEFT, PInvoke.HTBOTTOMRIGHT];
     }
     /// <summary>Names the current user's optional sign-in registration.</summary>
     sealed class StartupRegistration
@@ -58,13 +80,8 @@ internal sealed class WindowHost
         Panel = (NativeWindow)window.Handler!.PlatformView!;
         Configure(Panel, false);
         Panel.Activated += (_, args) => { if (!PanelWanted && args.WindowActivationState != Microsoft.UI.Xaml.WindowActivationState.Deactivated) Panel.AppWindow.Hide(); };
-        if (App.Hub.Preferences.PanelBounds is { } saved) Panel.AppWindow.MoveAndResize(new(saved.X, saved.Y, saved.Width, saved.Height));
-        else
-        {
-            RectInt32 work = WorkArea(Panel);
-            Panel.AppWindow.MoveAndResize(new(work.X + (work.Width - AppConstants.Windows.Panel.Width) / 2, work.Y + (work.Height - AppConstants.Windows.Panel.Height) / 2, AppConstants.Windows.Panel.Width, AppConstants.Windows.Panel.Height));
-        }
-        Panel.AppWindow.Closing += (_, args) => { if (!Exiting) { args.Cancel = true; ShowPanel(false); } };
+        RestorePanelBounds();
+        Panel.AppWindow.Closing += (_, args) => { if (!Exiting) { args.Cancel = true; if (CloseRequested is not null) CloseRequested.Invoke(); else ShowPanel(false); } };
         Panel.AppWindow.Changed += (_, args) =>
         {
             if (args.DidPositionChange || args.DidSizeChange)
@@ -113,10 +130,17 @@ internal sealed class WindowHost
     /// <param name="show">Whether to show the panel.</param>
     public void ShowPanel(bool show = true)
     {
-        PanelWanted = show;
-        if (!show) { App.Hub.SavePreferences(); Panel.AppWindow.Hide(); }
-        App.Hub.InvalidateViews();
-        if (show && PanelPrepared) { Panel.AppWindow.Show(); Panel.Activate(); }
+        RunSafely(() =>
+        {
+            if (!show)
+            {
+                try { App.Hub.SavePreferences(); }
+                finally { Interaction = null; PanelWanted = false; Panel.AppWindow.Hide(); App.Hub.InvalidateViews(); }
+                return;
+            }
+            PanelWanted = true; App.Hub.InvalidateViews();
+            if (PanelPrepared) { var presenter = (OverlappedPresenter)Panel.AppWindow.Presenter; if (presenter.State == OverlappedPresenterState.Minimized) presenter.Restore(); Panel.AppWindow.Show(); Panel.Activate(); }
+        });
     }
 
     /// <summary>Restacks the active notifications on the selected monitor.</summary>
@@ -154,8 +178,11 @@ internal sealed class WindowHost
         }
         else
         {
-            if (!PanelPrepared) { Configure(Panel, false); PanelPrepared = true; }
-            if (PanelWanted) Panel.AppWindow.Show(); else Panel.AppWindow.Hide();
+            if (!PanelPrepared)
+            {
+                Configure(Panel, false); PanelPrepared = true;
+                if (PanelWanted) Panel.AppWindow.Show(); else Panel.AppWindow.Hide();
+            }
         }
     }
 
@@ -173,14 +200,65 @@ internal sealed class WindowHost
         App.Hub.ConfirmVisible(receipts.Select(receipt => receipt with { Visible = visible && receipt.Visible }));
     }
 
-    /// <summary>Begins the normal Windows move operation from the HTML header.</summary>
-    /// <param name="toast">Whether the dragged header belongs to a toast window.</param>
-    public void Drag(bool toast = false)
+    /// <summary>Captures the actual pointer and rectangle when an HTML move/size target is pressed.</summary>
+    /// <param name="hit">A named Windows caption or sizing-edge hit-test value supplied by the HTML control.</param>
+    public void BeginWindowInteraction(uint hit)
     {
-        NativeWindow? native = toast ? Toast : Panel;
-        if (native is null) return;
-        PInvoke.ReleaseCapture();
-        PInvoke.SendMessage(Handle(native), PInvoke.WM_NCLBUTTONDOWN, new WPARAM((nuint)PInvoke.HTCAPTION), default);
+        Interaction = null;
+        if (!PanelWanted || !Chrome.InteractionAreas.Contains(hit) || PInvoke.GetAsyncKeyState((int)VIRTUAL_KEY.VK_LBUTTON) >= 0) return;
+        if (!PInvoke.GetCursorPos(out var pointer)) throw new System.ComponentModel.Win32Exception();
+        var position = Panel.AppWindow.Position; var size = Panel.AppWindow.Size;
+        Interaction = new(hit, new(pointer.X, pointer.Y), new(position.X, position.Y, size.Width, size.Height));
+    }
+
+    /// <summary>Applies the held cursor's delta directly; no Windows modal move loop owns button release.</summary>
+    public void UpdateWindowInteraction()
+    {
+        if (Interaction is not { } interaction) return;
+        if (PInvoke.GetAsyncKeyState((int)VIRTUAL_KEY.VK_LBUTTON) >= 0) { Interaction = null; return; }
+        if (!PInvoke.GetCursorPos(out var pointer)) throw new System.ComponentModel.Win32Exception();
+        var cursor = new System.Drawing.Point(pointer.X, pointer.Y);
+        if (cursor == interaction.LastCursor) return;
+        interaction.LastCursor = cursor;
+        int deltaX = cursor.X - interaction.Cursor.X, deltaY = cursor.Y - interaction.Cursor.Y;
+        var original = interaction.Bounds;
+        if (interaction.Hit == PInvoke.HTCAPTION) { Panel.AppWindow.Move(new(original.X + deltaX, original.Y + deltaY)); return; }
+        bool left = interaction.Hit is PInvoke.HTLEFT or PInvoke.HTTOPLEFT or PInvoke.HTBOTTOMLEFT;
+        bool right = interaction.Hit is PInvoke.HTRIGHT or PInvoke.HTTOPRIGHT or PInvoke.HTBOTTOMRIGHT;
+        bool top = interaction.Hit is PInvoke.HTTOP or PInvoke.HTTOPLEFT or PInvoke.HTTOPRIGHT;
+        bool bottom = interaction.Hit is PInvoke.HTBOTTOM or PInvoke.HTBOTTOMLEFT or PInvoke.HTBOTTOMRIGHT;
+        double scale = PInvoke.GetDpiForWindow(Handle(Panel)) / (double)PInvoke.USER_DEFAULT_SCREEN_DPI;
+        int width = Math.Max((int)(AppConstants.Windows.MinimumPanel.Width * scale), original.Width + (right ? deltaX : left ? -deltaX : 0));
+        int height = Math.Max((int)(AppConstants.Windows.MinimumPanel.Height * scale), original.Height + (bottom ? deltaY : top ? -deltaY : 0));
+        Panel.AppWindow.MoveAndResize(new(left ? original.Right - width : original.X, top ? original.Bottom - height : original.Y, width, height));
+    }
+
+    /// <summary>Ends movement on pointer release, capture loss, blur, cancellation, or panel closure.</summary>
+    public void EndWindowInteraction() => Interaction = null;
+
+    /// <summary>Minimizes the panel while the notification broker stays available.</summary>
+    public void Minimize() { Interaction = null; ((OverlappedPresenter)Panel.AppWindow.Presenter).Minimize(); }
+
+    /// <summary>Restores placement inside an available screen after a monitor or display scaling change.</summary>
+    void RestorePanelBounds()
+    {
+        var saved = App.Hub.Preferences.PanelBounds;
+        RectInt32 work = WorkArea(Panel);
+        if (saved is { } bounds)
+        {
+            var displays = DisplayArea.FindAll();
+            long largestOverlap = 0;
+            for (int index = 0; index < displays.Count; index++)
+            {
+                var area = displays[index].WorkArea;
+                long overlap = Math.Max(0, Math.Min(bounds.Right, area.X + area.Width) - Math.Max(bounds.X, area.X)) * (long)Math.Max(0, Math.Min(bounds.Bottom, area.Y + area.Height) - Math.Max(bounds.Y, area.Y));
+                if (overlap > largestOverlap) { largestOverlap = overlap; work = area; }
+            }
+        }
+        double scale = PInvoke.GetDpiForWindow(Handle(Panel)) / (double)PInvoke.USER_DEFAULT_SCREEN_DPI;
+        int width = Math.Clamp(saved?.Width ?? AppConstants.Windows.Panel.Width, Math.Min(work.Width, (int)(AppConstants.Windows.MinimumPanel.Width * scale)), work.Width);
+        int height = Math.Clamp(saved?.Height ?? AppConstants.Windows.Panel.Height, Math.Min(work.Height, (int)(AppConstants.Windows.MinimumPanel.Height * scale)), work.Height);
+        Panel.AppWindow.MoveAndResize(new(Math.Clamp(saved?.X ?? work.X + (work.Width - width) / 2, work.X, work.X + work.Width - width), Math.Clamp(saved?.Y ?? work.Y + (work.Height - height) / 2, work.Y, work.Y + work.Height - height), width, height));
     }
 
     /// <summary>Plays a local audio file or tone sequence, with a system-sound fallback after an actual failure.</summary>
@@ -211,7 +289,13 @@ internal sealed class WindowHost
                         foreach (ToneStep step in pattern.Steps)
                         {
                             token.ThrowIfCancellationRequested();
-                            await Task.Run(() => { if (!PInvoke.Beep((uint)step.Frequency, (uint)step.Duration.TotalMilliseconds)) throw new System.ComponentModel.Win32Exception(); }, token);
+                            for (TimeSpan remaining = step.Duration; remaining > TimeSpan.Zero;)
+                            {
+                                token.ThrowIfCancellationRequested();
+                                var slice = remaining < AppConstants.Audio.PlaybackSlice ? remaining : AppConstants.Audio.PlaybackSlice;
+                                await Task.Run(() => { if (!PInvoke.Beep((uint)step.Frequency, (uint)slice.TotalMilliseconds)) throw new System.ComponentModel.Win32Exception(); }, token);
+                                remaining -= slice;
+                            }
                             await Task.Delay(step.Pause, token);
                         }
                 }
@@ -254,6 +338,8 @@ internal sealed class WindowHost
         native.SetTitleBar(null);
         WindowProcedure ??= (window, message, wparam, lparam, subclass, data) =>
         {
+            // WinUI can retain nonclient insets after its style changes. HTML owns the entire window rectangle.
+            if (message == PInvoke.WM_NCCALCSIZE) return default;
             if (message == PInvoke.WM_STYLECHANGING && (nint)wparam.Value == (nint)WINDOW_LONG_PTR_INDEX.GWL_STYLE)
             {
                 STYLESTRUCT* change = (STYLESTRUCT*)lparam.Value;

@@ -87,7 +87,9 @@ public enum NotificationOperation
     /// <summary>Replaces a complete request, creating a new occurrence when rescheduled or previously completed.</summary>
     Replace,
     /// <summary>Closes the current occurrence and immediately retries the retained content with a new occurrence identity, preserving the series anchor.</summary>
-    Retry
+    Retry,
+    /// <summary>Removes completed occurrences while preserving active and future displays. Id and OccurrenceId optionally restrict the removal.</summary>
+    ClearHistory
 }
 /// <summary>Classifies a rejection without parsing message text.</summary>
 public enum NotificationError

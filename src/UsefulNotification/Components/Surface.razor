@@ -1,75 +1,120 @@
 @implements IDisposable
 @inject IJSRuntime JavaScript
+@using Windows.Win32
 <style>@((MarkupString)ThemeStyle.Render())</style>
-@if (Toast) { <style>body { zoom: @ContentScale.ToString(System.Globalization.CultureInfo.InvariantCulture); }</style> }
 @if (Toast)
 {
+    <style>body { zoom: @ContentScale.ToString(System.Globalization.CultureInfo.InvariantCulture); }</style>
     <main class="toast-stack">@foreach (var entry in Active) { <NotificationCard Entry="entry" Toast="true" @key="entry.Id" /> }</main>
 }
 else if (App.Host.IsPanelVisible)
 {
-    <main class="shell">
-        <header class="window-header" @onmousedown="() => App.Host.Drag()"><strong>@AppConstants.Product.Name</strong><button title="@Strings.Close" @onmousedown:stopPropagation @onclick="() => App.Host.ShowPanel(false)">&#x2715;</button></header>
-        <nav class="tabs">
-            @foreach (PanelSection section in Enum.GetValues<PanelSection>()) { <button class="@(Section == section ? "selected" : null)" @onclick="() => Section = section">@SectionLabel(section)</button> }
-        </nav>
-        @if (Section is PanelSection.Inbox or PanelSection.Scheduled)
-        {
-            <div class="toolbar"><input placeholder="@Strings.Search" @bind="Search" @bind:event="oninput" /><select @bind="Level"><option value="">@Strings.All</option>@foreach (NotificationLevel level in Enum.GetValues<NotificationLevel>()) { <option value="@level">@ThemeStyle.Label(level)</option> }</select><select @bind="Sort">@foreach (SortOrder order in Enum.GetValues<SortOrder>()) { <option value="@order">@SortLabel(order)</option> }</select><button class="primary" @onclick="() => Editing = new()">@Strings.New</button></div>
-        }
-        <section class="content">
-            @if (Error is not null) { <div class="error">@Error</div> }
-            @switch (Section)
-            {
-                case PanelSection.Inbox:
-                case PanelSection.Scheduled:
-                    @if (Editing is not null) { <NotificationEditor Request="Editing" Saved="SaveNotification" Canceled="() => Editing = null" /> }
-                    <div class="quick">@foreach (TimeSpan delay in AppConstants.Notifications.QuickDelays) { <button @onclick="() => Quick(delay)">+@string.Format(Strings.MinuteFormat, delay.TotalMinutes)</button> }<button @onclick="Clear">@Strings.ClearHistory</button><button @onclick="DismissAll">@Strings.DismissAll</button></div>
-                    <div class="list">
-                        @foreach (var entry in Filtered.Skip(Page * AppConstants.Storage.HistoryPageSize).Take(AppConstants.Storage.HistoryPageSize)) { <NotificationCard Entry="entry" Edit="Edit" @key="entry.Id" /> }
-                        <div class="actions"><button disabled="@(Page == 0)" @onclick="() => Page--">@Strings.HistoryPrevious</button><button disabled="@((Page + 1) * AppConstants.Storage.HistoryPageSize >= Filtered.Count())" @onclick="() => Page++">@Strings.HistoryNext</button></div>
-                        @if (!Filtered.Any()) { <p class="empty">@Strings.Empty</p> }
-                    </div>
-                    break;
-                case PanelSection.Sounds:
-                    <SoundEditor />
-                    break;
-                case PanelSection.Settings:
-                    <div class="settings">
-                        <div class="form-grid">
+    <main class="shell" @onkeydown="KeyDown">
+        <header class="window-header">
+            <div class="window-drag-region" data-window-hit="@PInvoke.HTCAPTION"><svg class="app-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></svg><strong>@AppConstants.Product.Name</strong></div>
+            <button title="@Strings.Minimize" aria-label="@Strings.Minimize" @onclick="App.Host.Minimize">&#x2212;</button>
+            <button title="@Strings.CloseToTray" aria-label="@Strings.CloseToTray" @onclick="ClosePanel">&#x2715;</button>
+        </header>
+        <div class="workspace">
+            <nav class="sidebar" aria-label="@Strings.Navigation">
+                @foreach (PanelSection section in Enum.GetValues<PanelSection>())
+                {
+                    <button class="nav-button" aria-current="@(Section == section ? "page" : null)" @onclick="() => Navigate(section)"><span>@SectionLabel(section)</span>@if (SectionCount(section) is { } count) { <small>@count</small> }</button>
+                }
+            </nav>
+            <section class="page">
+                <header class="page-header"><h1>@SectionLabel(Section)</h1>@if (IsList && Editing is null) { <button class="primary" @onclick="() => NewNotification()">+ @Strings.NewNotificationTitle</button> }</header>
+                @if (Error is not null) { <p class="error" role="alert">@Error</p> }
+                @if (Status is not null) { <p class="status" role="status">@Status</p> }
+                @if (IsList)
+                {
+                    @if (Editing is not null)
+                    {
+                        <div class="content"><NotificationEditor @key="Editing" Request="Editing" Saved="SaveNotification" Canceled="CancelEdit" DirtyChanged="value => EditorDirty = value" /></div>
+                    }
+                    else
+                    {
+                        <div class="toolbar">
+                            <label class="field search-field">@Strings.Search<input type="search" placeholder="@Strings.Search" @bind="Search" @bind:event="oninput" /></label>
+                            <label class="field">@Strings.Level<select @bind="Level"><option value="">@Strings.All</option>@foreach (NotificationLevel level in Enum.GetValues<NotificationLevel>()) { <option value="@level">@ThemeStyle.Label(level)</option> }</select></label>
+                            <label class="field">@Strings.Sort<select @bind="Sort">@foreach (SortOrder order in Enum.GetValues<SortOrder>()) { <option value="@order">@ThemeStyle.Label(order)</option> }</select></label>
+                        </div>
+                        @if (Section != PanelSection.History)
+                        {
+                            <div class="quick"><span class="muted">@Strings.QuickReminder</span>@foreach (TimeSpan delay in AppConstants.Notifications.QuickDelays) { <button @onclick="() => NewNotification(delay)">@string.Format(Strings.MinuteFormat, delay.TotalMinutes)</button> }</div>
+                        }
+                        <div class="list-heading"><small>@string.Format(Strings.NotificationCount, Filtered.Count())</small><div class="row">@if (Section == PanelSection.History) { <button disabled="@(!Filtered.Any())" @onclick="Clear">@Strings.ClearHistory</button> } else if (Section == PanelSection.Inbox) { <button disabled="@(!Active.Any())" @onclick="DismissAll">@Strings.DismissAll</button> }</div></div>
+                        <div class="content">
+                            <div class="list">
+                                @foreach (var entry in Filtered.Skip(Page * AppConstants.Storage.HistoryPageSize).Take(AppConstants.Storage.HistoryPageSize))
+                                {
+                                    <NotificationCard Entry="entry" Edit="Edit" DeleteRequested="Delete" History="@(Section == PanelSection.History)" ManualOrder="@(Sort == SortOrder.Manual)" @key="entry.Id" />
+                                }
+                                @if (!Filtered.Any()) { <div class="empty"><h2>@(Search.Length > 0 || Level is not null ? Strings.NoMatchingNotifications : EmptyLabel)</h2>@if (Search.Length > 0 || Level is not null) { <button @onclick="ResetFilters">@Strings.ResetFilters</button> }</div> }
+                            </div>
+                        </div>
+                        @if (Filtered.Count() > AppConstants.Storage.HistoryPageSize) { <footer class="pagination"><button disabled="@(Page == 0)" @onclick="() => Page--">@Strings.HistoryPrevious</button><small>@string.Format(Strings.PageNumber, Page + 1, PageCount)</small><button disabled="@(Page + 1 >= PageCount)" @onclick="() => Page++">@Strings.HistoryNext</button></footer> }
+                    }
+                }
+                else if (Section == PanelSection.Sounds)
+                {
+                    <div class="content"><SoundEditor DirtyChanged="value => SoundDirty = value" /></div>
+                }
+                else
+                {
+                    <div class="content settings">
+                        <fieldset class="form-section"><legend>@Strings.AppearanceOptions</legend><div class="form-grid">
                             <label class="field">@Strings.Theme<select @bind="SettingsDraft.Theme">@foreach (var theme in ThemeCatalog.Themes) { <option value="@theme.Name">@theme.Name</option> }</select></label>
                             <label class="field">@Strings.Language<select @bind="SettingsDraft.Language"><option value="@LocManager.SystemLanguage">@Strings.SystemLanguage</option>@foreach (var language in LocManager.Available) { <option value="@language.Code">@language.Name</option> }</select></label>
+                        </div></fieldset>
+                        <fieldset class="form-section"><legend>@Strings.DeliveryOptions</legend><div class="form-grid">
                             <label class="field">@Strings.MaximumVisible<input type="number" min="1" @bind="SettingsDraft.MaximumVisible" /></label>
-                            <label class="field">@Strings.Monitor<input type="number" min="0" @bind="SettingsDraft.Monitor" /></label>
+                            <label class="field">@Strings.Monitor<select @bind="SettingsDraft.Monitor"><option value="0">@Strings.AutomaticMonitor</option>@foreach (var monitor in App.Host.Monitors) { <option value="@monitor.Index">@monitor.Name</option> }</select></label>
                             <label class="check"><input type="checkbox" @bind="SettingsDraft.PlaySound" />@Strings.PlaySound</label>
                             <label class="check"><input type="checkbox" @bind="SettingsDraft.PauseOnHover" />@Strings.PauseOnHover</label>
+                        </div></fieldset>
+                        <fieldset class="form-section"><legend>@Strings.ApplicationOptions</legend><div class="form-grid">
                             <label class="check"><input type="checkbox" @bind="SettingsDraft.GlobalHotkey" />@Strings.GlobalHotkey</label>
                             <label class="check"><input type="checkbox" @bind="SettingsDraft.StartWithWindows" />@Strings.StartWithWindows</label>
                             <label class="check"><input type="checkbox" @bind="SettingsDraft.EnableLogging" />@Strings.Logging</label>
-                        </div>
-                        <div class="actions"><button class="primary" @onclick="SaveSettings">@Strings.Save</button><button @onclick="() => OpenDirectory(AppPaths.UserData)">@Strings.OpenData</button><button @onclick="() => OpenDirectory(Path.Combine(AppPaths.UserData, AppConstants.Storage.ThemesDirectory))">@Strings.OpenThemes</button><button @onclick="() => OpenDirectory(Path.Combine(AppPaths.UserData, AppConstants.Storage.TemplatesDirectory))">@Strings.OpenTemplates</button><button @onclick="Reload">@Strings.Reload</button><button @onclick="App.Host.Exit">@Strings.Exit</button></div>
+                        </div></fieldset>
+                        <div class="actions"><button class="primary" disabled="@(SettingsDraft == App.Hub.Configuration)" @onclick="SaveSettings">@Strings.Save</button><button disabled="@(SettingsDraft == App.Hub.Configuration)" @onclick="ResetSettings">@Strings.ResetChanges</button></div>
+                        <details class="form-section"><summary>@Strings.CustomizationFiles</summary><div class="actions"><button @onclick="() => OpenDirectory(AppPaths.UserData)">@Strings.OpenData</button><button @onclick="() => OpenDirectory(Path.Combine(AppPaths.UserData, AppConstants.Storage.ThemesDirectory))">@Strings.OpenThemes</button><button @onclick="() => OpenDirectory(Path.Combine(AppPaths.UserData, AppConstants.Storage.TemplatesDirectory))">@Strings.OpenTemplates</button><button @onclick="() => RequestLeave(Reload)">@Strings.Reload</button></div></details>
+                        <div class="application-exit"><button class="danger" @onclick="() => RequestLeave(App.Host.Exit)">@Strings.ExitApplication</button></div>
                     </div>
-                    break;
-            }
-        </section>
+                }
+            </section>
+        </div>
+        <span class="resize-edge left" data-window-hit="@PInvoke.HTLEFT"></span><span class="resize-edge right" data-window-hit="@PInvoke.HTRIGHT"></span><span class="resize-edge top" data-window-hit="@PInvoke.HTTOP"></span><span class="resize-edge bottom" data-window-hit="@PInvoke.HTBOTTOM"></span><span class="resize-edge top-left" data-window-hit="@PInvoke.HTTOPLEFT"></span><span class="resize-edge top-right" data-window-hit="@PInvoke.HTTOPRIGHT"></span><span class="resize-edge bottom-left" data-window-hit="@PInvoke.HTBOTTOMLEFT"></span><span class="resize-edge bottom-right" data-window-hit="@PInvoke.HTBOTTOMRIGHT"></span>
+        @if (Confirmation is { } confirmation)
+        {
+            <div class="dialog-backdrop"><section class="dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirmation-title"><h2 id="confirmation-title">@confirmation.Title</h2><p>@confirmation.Message</p><div class="actions"><button autofocus @onclick="() => Confirmation = null">@Strings.Cancel</button><button class="danger" @onclick="Confirm">@confirmation.Button</button></div></section></div>
+        }
     </main>
 }
 
 @code {
-    /// <summary>Identifies the panel's built-in work areas.</summary>
-    enum PanelSection { Inbox, Scheduled, Sounds, Settings }
-    /// <summary>Names user-selectable history orderings.</summary>
+    enum PanelSection { Inbox, Scheduled, History, Sounds, Settings }
     enum SortOrder { Newest, Oldest, Priority, NextDue, Manual }
+    sealed record PendingConfirmation(string Title, string Message, string Button, Action Execute);
     [Parameter] public bool Toast { get; set; }
     List<NotificationEntry> Entries = [];
     RuntimeSettings SettingsDraft = App.Hub.Configuration with { };
-    int Page;
     PanelSection Section;
-    SortOrder Sort;
-    NotificationLevel? Level;
-    string Search = string.Empty;
-    string? Error;
+    SortOrder SelectedSort;
+    NotificationLevel? SelectedLevel;
+    string SearchText = string.Empty;
+    int Page;
+    int PageCount => Math.Max(1, (Filtered.Count() + AppConstants.Storage.HistoryPageSize - 1) / AppConstants.Storage.HistoryPageSize);
+    string Search { get => SearchText; set { SearchText = value; Page = 0; } }
+    NotificationLevel? Level { get => SelectedLevel; set { SelectedLevel = value; Page = 0; } }
+    SortOrder Sort { get => SelectedSort; set { SelectedSort = value; Page = 0; } }
+    bool IsList => Section is PanelSection.Inbox or PanelSection.Scheduled or PanelSection.History;
+    bool EditorDirty, SoundDirty;
+    bool HasChanges => EditorDirty || SoundDirty || Section == PanelSection.Settings && SettingsDraft != App.Hub.Configuration;
+    string? Error, Status;
     NotificationRequest? Editing;
+    PendingConfirmation? Confirmation;
     DotNetObjectReference<Surface>? Reference;
     double ContentScale = 1;
     IEnumerable<NotificationEntry> Active => Entries.Where(entry => entry.Status == NotificationStatus.Visible || entry.Status == NotificationStatus.Pending && entry.DeliveryStartedAt is not null).OrderByDescending(entry => entry.Request.Priority).ThenBy(entry => entry.Order);
@@ -77,111 +122,78 @@ else if (App.Host.IsPanelVisible)
     {
         get
         {
-            IEnumerable<NotificationEntry> selected = Entries.Where(entry => Section != PanelSection.Scheduled || entry.Status is NotificationStatus.Scheduled or NotificationStatus.Snoozed)
-                .Where(entry => Level is null || entry.Request.Level == Level)
-                .Where(entry => string.IsNullOrWhiteSpace(Search) || $"{entry.Request.Source} {entry.Request.Title} {entry.Request.Message}".Contains(Search, StringComparison.CurrentCultureIgnoreCase));
-            return Sort switch { SortOrder.Oldest => selected.OrderBy(entry => entry.CreatedAt), SortOrder.Priority => selected.OrderByDescending(entry => entry.Request.Priority), SortOrder.NextDue => selected.OrderBy(entry => entry.DueAt), SortOrder.Manual => selected.OrderBy(entry => entry.Order), _ => selected.OrderByDescending(entry => entry.CreatedAt) };
+            IEnumerable<NotificationEntry> selected = Section switch
+            {
+                PanelSection.Inbox => Entries.Where(entry => entry.Status is NotificationStatus.Visible or NotificationStatus.Pending),
+                PanelSection.Scheduled => Entries.Where(entry => entry.Status is NotificationStatus.Scheduled or NotificationStatus.Snoozed),
+                PanelSection.History => Entries.Where(entry => entry.Result is not null).Select(entry => entry with { Occurrences = entry.Occurrences.Where(item => item.Result is not null).ToList() }),
+                _ => []
+            };
+            selected = selected.Where(entry => Level is null || entry.Request.Level == Level).Where(entry => string.IsNullOrWhiteSpace(Search) || $"{entry.Request.Source} {entry.Request.Title} {entry.Request.Message}".Contains(Search, StringComparison.CurrentCultureIgnoreCase));
+            return Sort switch { SortOrder.Oldest => selected.OrderBy(entry => entry.Current.ClosedAt ?? entry.CreatedAt), SortOrder.Priority => selected.OrderByDescending(entry => entry.Request.Priority), SortOrder.NextDue => selected.OrderBy(entry => entry.DueAt), SortOrder.Manual => selected.OrderBy(entry => entry.Order), _ => selected.OrderByDescending(entry => entry.Current.ClosedAt ?? entry.CreatedAt) };
         }
     }
+    string EmptyLabel => Section switch { PanelSection.Scheduled => Strings.NoScheduledNotifications, PanelSection.History => Strings.NoHistory, _ => Strings.NoActiveNotifications };
+    int? SectionCount(PanelSection section) => section switch { PanelSection.Inbox => Entries.Count(entry => entry.Status is NotificationStatus.Pending or NotificationStatus.Visible), PanelSection.Scheduled => Entries.Count(entry => entry.Status is NotificationStatus.Scheduled or NotificationStatus.Snoozed), PanelSection.History => Entries.Count(entry => entry.Result is not null), _ => null };
+    static string SectionLabel(PanelSection section) => section switch { PanelSection.Inbox => Strings.Inbox, PanelSection.Scheduled => Strings.Scheduled, PanelSection.History => Strings.History, PanelSection.Sounds => Strings.Sounds, _ => Strings.SettingsTitle };
 
-    /// <summary>Subscribes this renderer to journal and language changes.</summary>
     protected override void OnInitialized()
     {
-        Entries = App.Hub.Snapshot();
-        App.Hub.Changed += Changed;
-        LocManager.LanguageChanged += Changed;
+        Entries = App.Hub.Snapshot(); App.Hub.Changed += Changed; LocManager.LanguageChanged += Changed;
+        if (!Toast) App.Host.CloseRequested += NativeClose;
     }
-
-    /// <summary>Installs content observation and confirms only cards that reached an on-screen native surface.</summary>
-    /// <param name="firstRender">Whether JavaScript observation must be installed.</param>
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (firstRender)
-        {
-            Reference = DotNetObjectReference.Create(this);
-            await JavaScript.InvokeVoidAsync("notificationSurface.observe", Reference);
-        }
-        if (Toast && ContentScale != App.Host.ToastContentScale)
-        {
-            ContentScale = App.Host.ToastContentScale;
-            StateHasChanged();
-            return;
-        }
-        Guid[] rendered = Active.Select(entry => entry.Id).ToArray();
-        App.Host.SurfacePrepared(Toast, rendered);
+        if (firstRender) { Reference = DotNetObjectReference.Create(this); await JavaScript.InvokeVoidAsync("notificationSurface.observe", Reference); }
+        if (Toast && ContentScale != App.Host.ToastContentScale) { ContentScale = App.Host.ToastContentScale; StateHasChanged(); return; }
+        App.Host.SurfacePrepared(Toast, Active.Select(entry => entry.Id));
         if (Toast) await JavaScript.InvokeVoidAsync("notificationSurface.report");
+        else await JavaScript.InvokeVoidAsync("notificationSurface.focusDialog");
     }
-
-    /// <summary>Receives the actual card-stack height rather than guessing from message length.</summary>
-    /// <param name="height">Measured logical content height.</param>
-    [JSInvokable] public void ContentResized(double height)
-    {
-        if (!Toast || !Active.Any()) return;
-        App.Host.ResizeToast(height);
-
-    }
-
-    /// <summary>Accepts a declared action or the reserved template dismissal action.</summary>
-    /// <param name="id">The frame's notification identity.</param>
-    /// <param name="action">The declared action identity.</param>
-    /// <param name="reply">Optional template reply.</param>
+    [JSInvokable] public void BeginWindowInteraction(uint hit) => RunSafely(() => App.Host.BeginWindowInteraction(hit));
+    [JSInvokable] public void UpdateWindowInteraction() => RunSafely(App.Host.UpdateWindowInteraction);
+    [JSInvokable] public void EndWindowInteraction() => App.Host.EndWindowInteraction();
+    [JSInvokable] public void ContentResized(double height) { if (Toast && Active.Any()) App.Host.ResizeToast(height); }
+    [JSInvokable] public void CardsRendered(RenderReceipt[] receipts) => RunSafely(() => App.Host.ConfirmRendered(receipts));
     [JSInvokable] public async Task TemplateAction(string id, string occurrenceId, long revision, string action, string reply) => await RunSafelyAsync(async token =>
     {
         var entry = Entries.Single(item => item.Id == Guid.Parse(id));
         NotificationAction? selected = action == AppConstants.HtmlTemplates.DismissAction ? null : entry.Request.Actions.Single(item => item.Id == action);
         await App.Hub.InteractAsync(entry.Id, selected, reply, occurrenceId: Guid.Parse(occurrenceId), revision: revision);
     });
-    [JSInvokable] public void CardsRendered(RenderReceipt[] receipts) => RunSafely(() => App.Host.ConfirmRendered(receipts));
-    /// <summary>Refreshes this renderer on its own Blazor dispatcher.</summary>
-    async void Changed() => await RunSafelyAsync(async token => await InvokeAsync(() => { Entries = App.Hub.Snapshot(); StateHasChanged(); }));
-
-    /// <summary>Loads a detached request into the editor.</summary>
-    /// <param name="entry">The selected history or reminder item.</param>
-    void Edit(NotificationEntry entry) => Editing = NotificationProtocol.Copy(entry.Request) with { Id = entry.Id };
-
-    /// <summary>Commits a new notification or an edited request through the same command path as external clients.</summary>
-    /// <param name="request">The editor's complete request.</param>
+    async void Changed() => await RunSafelyAsync(async token => await InvokeAsync(() => { Entries = App.Hub.Snapshot(); Page = Math.Min(Page, PageCount - 1); StateHasChanged(); }));
+    async void NativeClose() => await RunSafelyAsync(async token => await InvokeAsync(() => { ClosePanel(); StateHasChanged(); }));
+    void RequestLeave(Action action)
+    {
+        void Leave() { Editing = null; EditorDirty = false; SoundDirty = false; SettingsDraft = App.Hub.Configuration with { }; action(); }
+        if (HasChanges) Confirmation = new(Strings.UnsavedChanges, Strings.DiscardChangesQuestion, Strings.DiscardChanges, Leave); else Leave();
+    }
+    void Navigate(PanelSection section) { if (Section == section) return; RequestLeave(() => { Section = section; Editing = null; EditorDirty = false; SoundDirty = false; Page = 0; Error = null; Status = null; SettingsDraft = App.Hub.Configuration with { }; }); }
+    void ClosePanel() => RequestLeave(() => App.Host.ShowPanel(false));
+    void Confirm() { var pending = Confirmation; Confirmation = null; if (pending is not null) RunSafely(pending.Execute); }
+    void KeyDown(KeyboardEventArgs args) { if (args.Key == "Escape") { if (Confirmation is not null) Confirmation = null; else if (Editing is not null) CancelEdit(); } }
+    void ResetFilters() { Search = string.Empty; Level = null; }
+    void NewNotification(TimeSpan? delay = null) => RequestLeave(() => { Editing = delay is { } after ? new() { Schedule = new() { At = DateTimeOffset.Now.Add(after) }, Lifetime = NotificationLifetimes.UntilAcknowledged } : new(); EditorDirty = false; Status = null; Error = null; });
+    void Edit(NotificationEntry entry) => RequestLeave(() => { Editing = Section == PanelSection.History ? NotificationProtocol.Copy(entry.Request) with { Id = null, Tag = null, Schedule = null } : NotificationProtocol.Copy(entry.Request) with { Id = entry.Id }; EditorDirty = false; });
+    void CancelEdit() => RequestLeave(() => { Editing = null; EditorDirty = false; });
+    void Delete(NotificationEntry entry) => Confirmation = new(Strings.DeleteNotification, entry.Request.Title ?? Strings.NewNotificationTitle, Strings.Delete, () => App.Hub.Apply(new() { Operation = Section == PanelSection.History ? NotificationOperation.ClearHistory : NotificationOperation.Delete, Id = entry.Id, OccurrenceId = Section == PanelSection.History ? entry.Current.Id : null }));
+    void Clear() => Confirmation = new(Strings.ClearHistory, Strings.ClearHistoryQuestion, Strings.ClearHistory, () => App.Hub.Apply(new() { Operation = NotificationOperation.ClearHistory }));
+    void DismissAll() => RunSafely(() => { foreach (var entry in Entries.Where(item => item.Status is NotificationStatus.Visible or NotificationStatus.Pending).ToArray()) App.Hub.Apply(new() { Operation = NotificationOperation.Dismiss, Id = entry.Id }); });
     void SaveNotification(NotificationRequest request)
     {
         var result = RunSafely(() => App.Hub.Apply(new() { Operation = Entries.Any(item => item.Id == request.Id) ? NotificationOperation.Replace : NotificationOperation.Send, Id = request.Id, Notification = request }));
-        if (result.Succeeded) Editing = null;
+        if (result.Succeeded) { Editing = null; EditorDirty = false; Status = Strings.NotificationSaved; }
         Error = result.Succeeded ? null : Strings.OperationFailed;
     }
-
-    /// <summary>Creates an editable quick reminder rather than requiring the user to enter every field.</summary>
-    /// <param name="delay">The selected quick delay.</param>
-    void Quick(TimeSpan delay) => Editing = new() { Schedule = new() { At = DateTimeOffset.Now.Add(delay) }, Lifetime = NotificationLifetimes.UntilAcknowledged };
-
-    /// <summary>Removes completed history while preserving active and future notifications.</summary>
-    void Clear() => RunSafely(() => App.Hub.Apply(new() { Operation = NotificationOperation.Clear }));
-
-    /// <summary>Acknowledges currently visible or pending notifications.</summary>
-    void DismissAll() => RunSafely(() => { foreach (var entry in Entries.Where(item => item.Status is NotificationStatus.Visible or NotificationStatus.Pending)) App.Hub.Apply(new() { Operation = NotificationOperation.Dismiss, Id = entry.Id }); });
-
-    /// <summary>Validates and persists settings, then reapplies native shortcuts and HTML appearance.</summary>
     void SaveSettings()
     {
+        Status = null;
         var result = RunSafely(() => App.Hub.SaveConfiguration(SettingsDraft with { }));
+        if (result.Succeeded) { SettingsDraft = App.Hub.Configuration with { }; Status = Strings.SettingsSaved; }
         Error = result.Succeeded ? null : Strings.OperationFailed;
-        if (result.Succeeded) SettingsDraft = App.Hub.Configuration with { };
     }
-    /// <summary>Loads edited theme and settings files.</summary>
-    void Reload() => RunSafely(() => App.Hub.Apply(new() { Operation = NotificationOperation.ReloadSettings }));
-
-    /// <summary>Opens an application-owned portable directory on an explicit user action.</summary>
-    /// <param name="path">The directory to create if needed and show.</param>
+    void ResetSettings() { SettingsDraft = App.Hub.Configuration with { }; Error = null; Status = null; }
+    void Reload() { var result = RunSafely(() => App.Hub.Apply(new() { Operation = NotificationOperation.ReloadSettings })); if (result.Succeeded) { ResetSettings(); Status = Strings.SettingsSaved; } else Error = Strings.OperationFailed; }
     static void OpenDirectory(string path) => RunSafely(() => { Directory.CreateDirectory(path); using Process? explorer = Process.Start(new ProcessStartInfo(path) { UseShellExecute = true }); });
-
-    /// <summary>Resolves navigation text without exposing internal enum names.</summary>
-    /// <param name="section">The work area.</param>
-    /// <returns>Localized navigation label.</returns>
-    static string SectionLabel(PanelSection section) => section switch { PanelSection.Inbox => Strings.Inbox, PanelSection.Scheduled => Strings.Scheduled, PanelSection.Sounds => Strings.Sounds, _ => Strings.SettingsTitle };
-
-    /// <summary>Resolves a sorting option's translated label.</summary>
-    /// <param name="order">The sort option.</param>
-    /// <returns>Localized sorting label.</returns>
-    static string SortLabel(SortOrder order) => ThemeStyle.Label(order);
-
-    /// <summary>Releases journal and language subscriptions when this native surface is destroyed.</summary>
-    public void Dispose() { App.Hub.Changed -= Changed; LocManager.LanguageChanged -= Changed; Reference?.Dispose(); }
+    public void Dispose() { App.Hub.Changed -= Changed; LocManager.LanguageChanged -= Changed; if (!Toast) App.Host.CloseRequested -= NativeClose; Reference?.Dispose(); }
 }
