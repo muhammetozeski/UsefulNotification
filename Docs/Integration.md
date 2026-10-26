@@ -196,7 +196,7 @@ Version 2 object shapes:
 
 The text boundary also accepts version 1 inputs: named themes, `kind`, `sticky`/`duration`, image/template path strings, named recurrence plus its old options, and legacy action fields. It converts them at the host. C# callers pass actual objects; the object serializer does not resolve theme names or scan files. A theme name in CLI/JSON is a text-interface convenience. The version 2 client requires a version 2 host; update both when moving from the earlier C# interface.
 
-For direct communication, open the `UsefulNotification.v1` named pipe on the same Windows computer. Send one UTF-8 JSON line without a byte-order mark, add a newline, flush, and read one response line. The host restricts connections to the current Windows user and limits a line to 1,048,576 characters.
+For direct communication, open the `UsefulNotification.v1` named pipe on the same Windows computer. Send one UTF-8 JSON line without a byte-order mark, add a newline, flush, and read one response line. The host restricts connections to the current Windows user and limits inbound request lines to 1,048,576 characters. NotificationClientOptions.MaximumResponseCharacters separately allows 16,777,216 response characters by default; a retained history can be larger than one request.
 
 ```json
 {"operation":"send","notification":{"title":"Job completed","silent":true}}
@@ -214,8 +214,12 @@ Use `notify.exe update --id <id> --json <file>` or `--stdin` for a patch. An omi
 
 For pipe polling, send Get and inspect the matching occurrence's `result` in `entries[].occurrences`. For a push result, the caller first creates its own named-pipe server and sets `callbackPipe` in the request. The host sends the same stored result as one BOM-free UTF-8 JSON line. Callback delivery is best effort; the journal retains the result if the recipient is unavailable. `notify.exe --wait` waits for the accepted occurrence.
 
+## Scoped history removal
+
+NotificationOperation.ClearHistory removes completed occurrences while preserving pending/future displays. Optional Id and OccurrenceId restrict removal to one series or result. The older Clear operation continues to remove completed series. The panel uses scoped history removal so deleting a past result does not cancel its recurring series.
+
 ## Data and source definitions
 
-`UserData` contains settings, notification history, language files, themes, and templates. `AppCache` contains logs and disposable renderer data. Move the whole program folder to retain its data. Failed journal commits reject the operation and restore the last committed in-memory state.
+`UserData` contains settings, notification history, language files, themes, and templates. `AppCache` contains logs and disposable renderer data. Move the whole program folder to retain its data. Stored references to files inside the program root are relative and resolve against its new location; external files retain their absolute paths. Bare PATH command names remain unchanged. Wire requests still carry the caller's absolute file references. Failed journal commits reject the operation and restore the last committed in-memory state.
 
 The field reference is the library's IntelliSense XML plus [contracts](https://github.com/muhammetozeski/UsefulNotification/blob/main/src/UsefulNotification.Core/Contracts.cs), [client](https://github.com/muhammetozeski/UsefulNotification/blob/main/src/UsefulNotification.Core/NotificationClient.cs), [actions](https://github.com/muhammetozeski/UsefulNotification/blob/main/src/UsefulNotification.Core/Actions.cs), and [recurrences](https://github.com/muhammetozeski/UsefulNotification/blob/main/src/UsefulNotification.Core/Recurrences.cs). To change the application itself, continue with [the development guide](Development.md).

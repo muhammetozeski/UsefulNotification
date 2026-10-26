@@ -54,6 +54,7 @@ The [integration guide](Docs/Integration.md) explains host startup, partial upda
 - [HTML and theme customization](Docs/Appearance.md)
 - [Build the source](Docs/Build.md)
 - [Change the source](Docs/Development.md)
+- [Panel interaction and window input](Docs/Interface.md)
 - [Documentation index](Docs/Index.md)
 
 The executables are digitally signed. To let Windows verify the signature, run `Install-Certificate.cmd` from `SignatureTrust.zip` once. The programs run without it; only the signature stays unverified.

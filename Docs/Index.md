@@ -6,3 +6,5 @@
 - [Building and packaging](Build.md): reproduce the Windows payload and portable launcher.
 - [Documentation guidance](Documentation.md): maintain the project's verified knowledge.
 - [Why this documentation exists](Purpose.md): distinguish reusable knowledge from transient progress.
+
+- [Panel interaction](Interface.md): navigation, draft ownership, history scope, window input, and appearance verification.
