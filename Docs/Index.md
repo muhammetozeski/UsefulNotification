@@ -8,3 +8,5 @@
 - [Why this documentation exists](Purpose.md): distinguish reusable knowledge from transient progress.
 
 - [Panel interaction](Interface.md): navigation, draft ownership, history scope, window input, and appearance verification.
+
+- [Interactive C# demo](../Demo/README.md): run editable API examples through PowerShell and csc.

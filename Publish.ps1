@@ -22,6 +22,9 @@ foreach ($name in @('UsefulNotification', 'UsefulNotification.Command', 'UsefulN
 if (-not (Test-Path -LiteralPath (Join-Path $payloadRoot 'resources.pri'))) {
     throw 'The Windows resource index is missing from the publish output. Keep EnableMsixTooling enabled.'
 }
+if (Test-Path -LiteralPath (Join-Path $projectRoot 'Demo\Build.ps1')) {
+    & (Join-Path $projectRoot 'Demo\Build.ps1') -PackageRoot $packageRoot
+}
 
 # The SDK apphost loads the C# launcher from AppData; no single-file linker or runtime bundle is required.
 $sdkVersion = (& dotnet --version).Trim()

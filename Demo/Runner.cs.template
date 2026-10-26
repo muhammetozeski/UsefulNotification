@@ -1,0 +1,58 @@
+using System;
+using System.IO;
+using System.IO.Pipes;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Collections.Generic;
+using System.Linq;
+using System.Diagnostics;
+using System.Drawing;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using UsefulNotification;
+
+/// <summary>Runs the exact visible example against the public notification client.</summary>
+internal static class ExampleProgram
+{
+    static JsonSerializerOptions Output = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, Converters = { new JsonStringEnumConverter() } };
+
+    /// <summary>Supplies only connection, asset, output and cancellation context to the example body.</summary>
+    /// <param name="args">Host executable and demo asset directory.</param>
+    /// <returns>Zero for completion, two for cancellation, one for a reported failure.</returns>
+    static async Task<int> Main(string[] args)
+    {
+        NotificationClient.Options = new() { Application = new FileInfo(args[0]) };
+        var assets = new DirectoryInfo(args[1]);
+        using var cancellation = new CancellationTokenSource();
+        CancellationToken token = cancellation.Token;
+        _ = Task.Run(async () => { if (await Console.In.ReadLineAsync() is not null) cancellation.Cancel(); });
+        try
+        {
+#line 1 "VisibleExample.cs"
+{{CODE}}
+#line default
+            return 0;
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { Console.WriteLine("Cancelled."); return 2; }
+        catch (Exception error) { Console.Error.WriteLine(error); return 1; }
+    }
+
+    /// <summary>Prints observable public results without serializing process environments or credentials.</summary>
+    /// <param name="value">Receipt, result, or an example's explicitly selected output.</param>
+    static void Print(object? value)
+    {
+        object? output = value is NotificationReceipt receipt ? new
+        {
+            receipt.Accepted, receipt.Id, receipt.OccurrenceId, receipt.ProtocolVersion, receipt.Failure,
+            Entries = receipt.Entries?.Select(entry => new
+            {
+                entry.Id, entry.Request.Source, entry.Request.Title, entry.Request.Message, entry.Request.Group, entry.Request.Tag,
+                Theme = entry.Request.Theme?.Name, entry.Request.Level, entry.Request.Priority, entry.Request.Progress,
+                entry.Status, entry.DueAt, entry.VisibleAt, entry.ExpiresAt, entry.Result,
+                Occurrences = entry.Occurrences.Select(item => new { item.Id, item.Status, item.DueAt, item.VisibleAt, item.Result })
+            })
+        } : value;
+        Console.WriteLine(JsonSerializer.Serialize(output, Output));
+    }
+}
