@@ -24,7 +24,7 @@ function Compile-CSharp([string]$Source, [string]$Output, [bool]$Gui) {
     # All compiler inputs are explicit; no project build, package restore or manual downloads are involved.
     [IO.Directory]::CreateDirectory((Split-Path $Output)) | Out-Null
     $arguments = [Collections.Generic.List[string]]::new()
-    $arguments.AddRange([string[]]@('/nostdlib+','/langversion:14.0','/nullable:enable','/platform:x64','/optimize+','/warnaserror+','/utf8output',('/target:' + $(if ($Gui) { 'winexe' } else { 'exe' })),('/out:"' + $Output + '"')))
+    $arguments.AddRange([string[]]@('/nologo','/nostdlib+','/langversion:14.0','/nullable:enable','/platform:x64','/optimize+','/warnaserror+','/utf8output',('/target:' + $(if ($Gui) { 'winexe' } else { 'exe' })),('/out:"' + $Output + '"')))
     foreach ($reference in $references) { $arguments.Add('/reference:"' + $reference.FullName + '"') }
     foreach ($name in @('UsefulNotification.Core.dll','Polly.Core.dll')) { $arguments.Add('/reference:"' + (Join-Path $PayloadDirectory $name) + '"') }
     if ($Gui) { $icon = Join-Path (Split-Path $PSScriptRoot) 'Assets\app.ico'; if (-not (Test-Path -LiteralPath $icon)) { $icon = Join-Path $PayloadDirectory 'app.ico' }; $arguments.Add('/win32icon:"' + $icon + '"') }
