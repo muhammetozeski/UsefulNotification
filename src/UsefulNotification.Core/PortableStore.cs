@@ -43,7 +43,7 @@ internal static class PortableStore
         string staging = path + Guid.NewGuid().ToString("N") + AppConstants.Storage.TemporaryExtension;
         try
         {
-            File.WriteAllText(staging, JsonSerializer.Serialize(document, AppConstants.Json));
+            File.WriteAllText(staging, JsonSerializer.Serialize(document, AppConstants.StorageJson));
             new ResiliencePipelineBuilder().AddRetry(AppConstants.Retry).Build().Execute(() =>
             {
                 if (File.Exists(path)) File.Replace(staging, path, path + AppConstants.Storage.BackupExtension);

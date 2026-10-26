@@ -20,6 +20,23 @@ internal static class AppConstants
     public static AudioPolicy Audio = new();
     public static JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true, AllowOutOfOrderMetadataProperties = true, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull, Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase), new NotificationThemeConverter(), new FileInfoConverter(), new ColorConverter(), new ProcessStartConverter(), new ChangeConverterFactory() } };
     public static JsonSerializerOptions WireJson = new(Json) { WriteIndented = false };
+    static readonly Lazy<JsonSerializerOptions> StoredJson = new(() => CreateStorageJson(new DirectoryInfo(AppPaths.Root)));
+    /// <summary>Uses portable root-relative asset references only for persisted documents; wire requests retain absolute paths.</summary>
+    public static JsonSerializerOptions StorageJson => StoredJson.Value;
+
+    /// <summary>Builds an independent storage serializer for the supplied application root.</summary>
+    /// <param name="root">Root against which owned asset references are stored and restored.</param>
+    /// <returns>Options retaining the ordinary contract converters and adding portable path ownership.</returns>
+    public static JsonSerializerOptions CreateStorageJson(DirectoryInfo root)
+    {
+        var options = new JsonSerializerOptions(Json);
+        foreach (var converter in options.Converters.Where(converter => converter is FileInfoConverter or ProcessStartConverter).ToArray()) options.Converters.Remove(converter);
+        var paths = new PortablePathContext(root);
+        options.Converters.Add(new FileInfoConverter(paths));
+        options.Converters.Add(new FileUriConverter(paths));
+        options.Converters.Add(new ProcessStartConverter(paths));
+        return options;
+    }
     public static RetryStrategyOptions Retry = new()
     {
         MaxRetryAttempts = 2, Delay = TimeSpan.FromMilliseconds(120), BackoffType = DelayBackoffType.Exponential,
@@ -109,6 +126,8 @@ internal sealed class HotkeyOptions
 /// <summary>Bounds the resident renderer's stylesheet, template, and image caches.</summary>
 internal sealed class RenderMemoryOptions
 {
+    /// <summary>Supported local, web and embedded image resource schemes shared by validation and the renderer.</summary>
+    public HashSet<string> ImageSchemes { get; set; } = new(StringComparer.OrdinalIgnoreCase) { Uri.UriSchemeFile, Uri.UriSchemeHttp, Uri.UriSchemeHttps, "data" };
     public int Styles { get; set; } = 64;
     public int Templates { get; set; } = 32;
     public int Images { get; set; } = 32;

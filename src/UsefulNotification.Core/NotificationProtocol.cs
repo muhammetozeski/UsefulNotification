@@ -79,7 +79,7 @@ internal static class NotificationProtocol
                     entry["occurrences"] = new JsonArray(occurrence);
                 }
             }
-        T value = root.Deserialize<T>(AppConstants.Json) ?? throw new JsonException("Stored data is empty.");
+        T value = root.Deserialize<T>(AppConstants.StorageJson) ?? throw new JsonException("Stored data is empty.");
         if (value is DesktopPreferences preferences && root["selectedSound"] is JsonValue selected && selected.TryGetValue<string>(out string? name))
             preferences.SelectedSound = preferences.Sounds.FirstOrDefault(sound => sound.Name == name) ?? preferences.SelectedSound;
         return value;
