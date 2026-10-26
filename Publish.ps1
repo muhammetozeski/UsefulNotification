@@ -2,7 +2,13 @@
 param()
 $ErrorActionPreference = 'Stop'
 $projectRoot = $PSScriptRoot
-$packageRoot = Join-Path $projectRoot 'publish\UsefulNotification'
+$publishRoot = [IO.Path]::GetFullPath((Join-Path $projectRoot 'publish'))
+$destinationRoot = Join-Path $publishRoot 'UsefulNotification'
+$packageRoot = Join-Path $publishRoot 'UsefulNotification.pending'
+if (Test-Path -LiteralPath $packageRoot) {
+    if ((Resolve-Path -LiteralPath $packageRoot).Path -ne [IO.Path]::GetFullPath($packageRoot)) { throw 'Unexpected staging path.' }
+    [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory($packageRoot, 'OnlyErrorDialogs', 'SendToRecycleBin')
+}
 $payloadRoot = Join-Path $packageRoot 'AppData'
 $locator = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
 $buildTool = @(& $locator -latest -products '*' -find 'MSBuild\Current\Bin\amd64\MSBuild.exe')[0]
@@ -38,4 +44,9 @@ Copy-Item -LiteralPath (Join-Path $projectRoot 'README.md') -Destination $packag
 Copy-Item -LiteralPath (Join-Path $projectRoot 'LICENSE') -Destination $packageRoot -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot 'Docs') -Destination $packageRoot -Recurse -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot 'Examples') -Destination $packageRoot -Recurse -Force
-Write-Output "Published: $packageRoot"
+if (Test-Path -LiteralPath $destinationRoot) {
+    if ((Resolve-Path -LiteralPath $destinationRoot).Path -ne [IO.Path]::GetFullPath($destinationRoot)) { throw 'Unexpected publish path.' }
+    [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory($destinationRoot, 'OnlyErrorDialogs', 'SendToRecycleBin')
+}
+[IO.Directory]::Move($packageRoot, $destinationRoot)
+Write-Output "Published: $destinationRoot"
