@@ -36,6 +36,12 @@ internal sealed class NotificationHub : IAsyncDisposable
         bool recovered = false;
         foreach (var entry in Entries)
         {
+            if (entry.Acceptances.Count == 0)
+            {
+                entry.Acceptances.Add(new(entry.Id, entry.AcceptedOccurrenceId ?? entry.Current.Id));
+                if (entry.Request.Id is { } latest && latest != entry.Id) entry.Acceptances.Add(new(latest, entry.Current.Id));
+                recovered = true;
+            }
             var occurrence = entry.Current;
             if (occurrence.Action?.Status == ActionStatus.Pending)
             {
@@ -91,6 +97,10 @@ internal sealed class NotificationHub : IAsyncDisposable
         {
             if (command.Operation is NotificationOperation.List or NotificationOperation.Get)
                 return new() { Accepted = true, Id = command.Id, Entries = Published.Where(item => command.Id is null || item.Id == command.Id).ToList() };
+            if (command.Operation == NotificationOperation.Send && command.Notification?.Id is { } incoming)
+                foreach (var accepted in Entries)
+                    if (accepted.Acceptances.FirstOrDefault(item => item.RequestId == incoming) is { } acceptance)
+                        return Receipt(accepted, acceptance.OccurrenceId);
             NotificationEntry? entry = Entries.FirstOrDefault(item => item.Id == (command.Id ?? command.Notification?.Id));
             switch (command.Operation)
             {
@@ -120,6 +130,7 @@ internal sealed class NotificationHub : IAsyncDisposable
                         if (reschedule) Schedule(entry, true);
                         else if (lifetimeChanged) ApplyLifetime(entry);
                     }
+                    entry.Acceptances.Add(new(request.Id ?? entry.Id, entry.Current.Id));
                     response = Receipt(entry);
                     break;
                 case NotificationOperation.Update:
@@ -383,6 +394,10 @@ internal sealed class NotificationHub : IAsyncDisposable
     }
     static void Validate(NotificationRequest request)
     {
+        if (request.Actions is null || request.Checklist is null || request.Data is null) throw new ArgumentException("Actions, checklist and data collections cannot be null.");
+        if (request.Actions.Any(action => action is null || string.IsNullOrWhiteSpace(action.Id))) throw new ArgumentException("Actions must have usable identities.");
+        if (request.Checklist.Any(item => item is null || string.IsNullOrWhiteSpace(item.Id)) || request.Checklist.Select(item => item.Id).Distinct().Count() != request.Checklist.Count) throw new ArgumentException("Checklist items must have unique usable identities.");
+        ThemeCatalog.For(request).Validate();
         if (request.Lifetime is ExpiringLifetime expiry && expiry.Duration <= TimeSpan.Zero) throw new ArgumentException("Expiry must be positive.");
         if (request.Schedule?.At is not null && request.Schedule.After is not null) throw new ArgumentException("Choose an absolute time or delay.");
         if (request.Schedule?.After < TimeSpan.Zero) throw new ArgumentException("Delay cannot be negative.");
@@ -393,7 +408,7 @@ internal sealed class NotificationHub : IAsyncDisposable
         foreach (var action in request.Actions) action.Validate();
         if (request.Actions.Select(action => action.Id).Distinct().Count() != request.Actions.Count) throw new ArgumentException("Action ids must be unique.");
         if (request.Template?.File is { } file && !file.Exists) throw new FileNotFoundException("The HTML template was not found.", file.FullName);
-        if (request.Image is { } image && (!image.Source.IsAbsoluteUri || image.Source.IsFile && !File.Exists(image.Source.LocalPath))) throw new ArgumentException("The image source is unavailable.");
+        if (request.Image is { } image && (image.Source is null || !image.Source.IsAbsoluteUri || !AppConstants.RenderMemory.ImageSchemes.Contains(image.Source.Scheme) || image.Source.IsFile && !File.Exists(image.Source.LocalPath))) throw new ArgumentException("The image source is unavailable or unsupported.");
     }
 
     public void SavePreferences(DesktopPreferences? preferences = null)
@@ -434,8 +449,13 @@ internal sealed class NotificationHub : IAsyncDisposable
         try
         {
             foreach (var entry in Entries)
+            {
                 if (entry.Occurrences.Count > AppConstants.Storage.HistoryCapacity)
                     entry.Occurrences.RemoveRange(0, entry.Occurrences.Count - AppConstants.Storage.HistoryCapacity);
+                var retained = entry.Occurrences.Select(item => item.Id).ToHashSet();
+                entry.Acceptances.RemoveAll(item => !retained.Contains(item.OccurrenceId));
+                if (entry.Acceptances.Count > AppConstants.Storage.HistoryCapacity) entry.Acceptances.RemoveRange(0, entry.Acceptances.Count - AppConstants.Storage.HistoryCapacity);
+            }
             var remove = Entries.Where(item => item.Current.Result is not null).OrderByDescending(item => item.CreatedAt).Skip(AppConstants.Storage.HistoryCapacity).ToHashSet();
             Entries.RemoveAll(remove.Contains);
             PortableStore.Write(AppConstants.Storage.HistoryFile, Entries);

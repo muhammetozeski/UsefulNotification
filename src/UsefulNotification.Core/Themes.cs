@@ -8,6 +8,12 @@ namespace UsefulNotification;
 /// <summary>Groups colors, typography, and spacing for built-in and user-defined HTML themes.</summary>
 public sealed record NotificationTheme
 {
+    /// <summary>Rejects missing required sections before a request or file-backed theme reaches rendering.</summary>
+    internal void Validate()
+    {
+        if (Palette is null || Palette.Levels is null || Typography is null || Layout is null || Frame is null || Frame.Thickness is null)
+            throw new ArgumentException("A theme requires palette, level colors, typography, layout and frame sections.");
+    }
     /// <summary>Editable theme identity used by host files and UI; initially Dark. Requests transfer the complete object rather than resolving this name.</summary>
     public string Name { get; set; } = nameof(NotificationThemes.Dark);
     /// <summary>Complete surface and semantic colors. Initialized independently for a newly constructed theme.</summary>
@@ -252,6 +258,7 @@ internal static class ThemeCatalog
                 if (document.RootElement.ValueKind != JsonValueKind.Object) throw new JsonException("A theme file must contain a theme object.");
                 var theme = document.RootElement.Deserialize<NotificationTheme>(AppConstants.Json) ?? throw new InvalidDataException(path);
                 ArgumentException.ThrowIfNullOrWhiteSpace(theme.Name);
+                theme.Validate();
                 return theme;
             });
             if (result.Succeeded && result.Value is { } theme)

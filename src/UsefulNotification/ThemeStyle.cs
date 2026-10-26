@@ -49,11 +49,11 @@ internal static class ThemeStyle
         button { min-height: {{layout.ButtonHeight}}px; padding: {{layout.CompactGap}}px {{layout.Padding}}px; cursor: pointer; }
         button:hover:not(:disabled) { border-color: {{colors.Accent.ToCss()}}; }
         button.primary { background: {{colors.Accent.ToCss()}}; color: {{colors.AccentText.ToCss()}}; border-color: {{colors.Accent.ToCss()}}; }
-        button:disabled { opacity: .45; cursor: default; }
-        button.danger { color: {{colors.Levels[NotificationLevel.Error].ToCss()}}; }
+        button:disabled { background: {{colors.Surface.ToCss()}}; color: {{colors.Muted.ToCss()}}; border-color: {{colors.Border.ToCss()}}; cursor: default; }
+        button.danger { color: {{colors.Levels.GetValueOrDefault(NotificationLevel.Error, colors.Accent).ToCss()}}; }
         button:focus-visible, summary:focus-visible, input:focus, textarea:focus, select:focus { outline: {{layout.Border}}px solid {{colors.Accent.ToCss()}}; outline-offset: {{layout.Border}}px; }
         input, textarea, select { padding: {{layout.Gap}}px; min-width: 0; }
-        input:disabled, textarea:disabled { opacity: .6; }
+        input:disabled, textarea:disabled { color: {{colors.Muted.ToCss()}}; background: {{colors.Surface.ToCss()}}; }
         textarea { resize: vertical; }
         input[type=checkbox] { accent-color: {{colors.Accent.ToCss()}}; width: auto; }
         h1, h2, h3, p { margin: 0; }
@@ -127,8 +127,8 @@ internal static class ThemeStyle
         .span-all { grid-column: 1 / -1; }
         .empty { display: flex; flex-direction: column; align-items: center; gap: {{layout.Padding}}px; padding: {{layout.PagePadding * 2}}px; color: {{colors.Muted.ToCss()}}; }
         .empty h2 { font-size: {{text.Body}}px; font-weight: {{text.NormalWeight}}; }
-        .error, .status { padding: {{layout.Gap}}px {{layout.Padding}}px; border-left: {{layout.AccentBorder}}px solid {{colors.Levels[NotificationLevel.Error].ToCss()}}; }
-        .status { border-left-color: {{colors.Levels[NotificationLevel.Success].ToCss()}}; }
+        .error, .status { padding: {{layout.Gap}}px {{layout.Padding}}px; border-left: {{layout.AccentBorder}}px solid {{colors.Levels.GetValueOrDefault(NotificationLevel.Error, colors.Accent).ToCss()}}; }
+        .status { border-left-color: {{colors.Levels.GetValueOrDefault(NotificationLevel.Success, colors.Accent).ToCss()}}; }
         .page > .error, .page > .status { margin-inline: {{layout.PagePadding}}px; margin-bottom: {{layout.Padding}}px; }
         .tone { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: {{layout.Gap}}px; padding-block: {{layout.Gap}}px; border-bottom: {{layout.Border}}px solid {{colors.Border.ToCss()}}; }
         .tone-actions { grid-column: 1 / -1; display: flex; gap: {{layout.Gap}}px; }
@@ -220,7 +220,7 @@ internal static class ThemeStyle
     public static string ImageSource(NotificationImage image)
     {
         Uri uri = image.Source;
-        if (!uri.IsFile && uri.Scheme is "https" or "http" or "data") return uri.AbsoluteUri;
+        if (!uri.IsFile && AppConstants.RenderMemory.ImageSchemes.Contains(uri.Scheme)) return uri.AbsoluteUri;
         if (!uri.IsFile) throw new ArgumentException("Unsupported image URI.");
         string path = uri.LocalPath;
         DateTime modified = File.GetLastWriteTimeUtc(path);

@@ -331,6 +331,8 @@ public sealed record NotificationUpdate
 /// <summary>Owns a series and its bounded display history.</summary>
 public sealed record NotificationEntry
 {
+    /// <summary>Retained send identities and original accepted displays, including source/tag upserts. Bounded by retained displays and the host history capacity.</summary>
+    public List<NotificationAcceptance> Acceptances { get; set; } = [];
     /// <summary>Stable notification series identity used by management commands.</summary>
     public Guid Id { get; set; } = Guid.NewGuid();
     /// <summary>Accepted independent request snapshot. Editing a returned copy does not update the host; use UpdateAsync or Replace.</summary>
@@ -360,6 +362,10 @@ public sealed record NotificationEntry
     /// <summary>Most recent retained completed result. Use the receipt occurrence identity when waiting for one particular display.</summary>
     [JsonIgnore] public NotificationResult? Result => Occurrences.LastOrDefault(item => item.Result is not null)?.Result;
 }
+/// <summary>Links an accepted sender request to the display returned by its original receipt; retained with that display's history.</summary>
+/// <param name="RequestId">Stable incoming Send identity, which can differ from the series identity after a tag upsert.</param>
+/// <param name="OccurrenceId">Display identity originally acknowledged for that request.</param>
+public sealed record NotificationAcceptance(Guid RequestId, Guid OccurrenceId);
 /// <summary>Owns the evidence and result of one display.</summary>
 public sealed record NotificationOccurrence
 {
