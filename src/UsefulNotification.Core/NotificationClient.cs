@@ -10,6 +10,8 @@ namespace UsefulNotification;
 /// <summary>Owns actual client endpoint, startup, polling and Polly request policies.</summary>
 public sealed record NotificationClientOptions
 {
+    /// <summary>Maximum response-line length in characters, initially 16 Mi characters so retained history can exceed one request. Increase for deliberately larger histories; inbound requests keep the host's separate limit.</summary>
+    public int MaximumResponseCharacters { get; set; } = 16 * 1024 * 1024;
     /// <summary>Optional host executable location. Null resolves the payload beside this library; set it when integrating from another application folder.</summary>
     public FileInfo? Application { get; set; }
     /// <summary>True, initially, permits a background host launch after the initial connection times out.</summary>
@@ -93,7 +95,7 @@ public static class NotificationClient
                 if (!pipe.IsConnected) await pipe.ConnectAsync(settings.ConnectTimeout, token);
                 Log($"Request; operation={operation}; pipe={settings.PipeName}; characters={payload.Length}", PrintToConsole: false, isRun: IsLogEnabled);
                 await NotificationProtocol.WriteLineAsync(pipe, payload, token);
-                string text = await NotificationProtocol.ReadLineAsync(pipe, token);
+                string text = await NotificationProtocol.ReadLineAsync(pipe, token, settings.MaximumResponseCharacters);
                 var root = JsonNode.Parse(text) ?? throw new JsonException("An acknowledgement is required.");
                 if (root["protocolVersion"]?.GetValue<int>() != 2)
                     return new NotificationReceipt { Failure = new(NotificationError.IncompatibleHost, "This client requires UsefulNotification 2 or later.") };

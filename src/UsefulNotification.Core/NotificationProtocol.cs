@@ -12,8 +12,15 @@ internal static class NotificationProtocol
         await stream.WriteAsync(bytes, cancellationToken);
         await stream.FlushAsync(cancellationToken);
     }
-    public static async Task<string> ReadLineAsync(Stream stream, CancellationToken cancellationToken)
+    /// <summary>Reads one bounded UTF-8 line; callers can provide a distinct response budget without widening inbound requests.</summary>
+    /// <param name="stream">Connected channel carrying one line.</param>
+    /// <param name="cancellationToken">Cancels the underlying reads.</param>
+    /// <param name="maximumCharacters">Character budget; null selects the host request limit.</param>
+    /// <returns>The complete line without its terminator.</returns>
+    public static async Task<string> ReadLineAsync(Stream stream, CancellationToken cancellationToken, int? maximumCharacters = null)
     {
+        int limit = maximumCharacters ?? AppConstants.Transport.MaximumMessageCharacters;
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(limit);
         using var reader = new StreamReader(stream, AppConstants.Transport.Encoding, leaveOpen: true);
         char[] buffer = System.Buffers.ArrayPool<char>.Shared.Rent(4096);
         var text = new StringBuilder();
@@ -25,7 +32,7 @@ internal static class NotificationProtocol
                 if (count == 0) throw new EndOfStreamException("The peer closed the channel before a complete line.");
                 int end = buffer.AsSpan(0, count).IndexOf('\n');
                 int length = end >= 0 ? end : count;
-                if (text.Length + length > AppConstants.Transport.MaximumMessageCharacters) throw new InvalidDataException("The message exceeds the channel limit.");
+                if (text.Length + length > limit) throw new InvalidDataException("The message exceeds the channel limit.");
                 text.Append(buffer, 0, length);
                 if (end >= 0) return text.ToString().TrimEnd('\r');
             }
