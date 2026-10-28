@@ -12,7 +12,7 @@ Designed for programs and scripts, with a tray panel for people. Notification co
 
 Extract the Windows x64 archive from [Releases](https://github.com/muhammetozeski/UsefulNotification/releases). Keep the entire folder together. This framework-dependent build requires the x64 .NET 10 runtime, Windows App Runtime 1.7, and the Microsoft Edge WebView2 Runtime.
 
-Run `UsefulNotification.exe` to open the panel. The tray icon reopens it after closing. The optional Start with Windows setting launches it in the background at sign-in.
+Run `UsefulNotification.exe` once from its permanent portable folder to open the panel and register its location for the current Windows account. Run it again after moving the folder to refresh that location. The tray icon reopens the panel after closing. The optional Start with Windows setting launches it in the background at sign-in.
 
 From a terminal in the extracted program folder:
 
@@ -23,7 +23,7 @@ From a terminal in the extracted program folder:
 
 The first command needs no arguments. The broker supplies useful content, the sender, level, and timestamp. Programs can also use the C# interface or the local named-pipe protocol.
 
-For a .NET 10 x64 Windows caller, reference the Core project or the distributed Core library and matching dependencies:
+For a .NET 10 x64 Windows caller, install the matching software development kit (SDK) as a shared local NuGet feed, then add `UsefulNotification.Core` version `2.1.0` to each caller project. The SDK contains the exact dependency packages and IntelliSense documentation. After the host's first launch, callers in other folders can send with the default client options:
 
 ```csharp
 using UsefulNotification;
@@ -36,7 +36,7 @@ await NotificationClient.SendAsync(new()
 });
 ```
 
-The [integration guide](Docs/Integration.md) explains host startup, partial updates, typed actions, and receiving the result of a specific display.
+The [integration guide](Docs/Integration.md) provides SDK installation and package reference steps, host discovery, partial updates, typed actions, and receiving the result of a specific display.
 
 ## Features
 

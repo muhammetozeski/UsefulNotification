@@ -18,16 +18,28 @@ Command durations are seconds or .NET durations such as `00:05:00`. `notify.exe 
 
 ## Call from C#
 
-Reference `UsefulNotification.Core.csproj` from a Windows .NET 10 x64 program, or reference the distributed `AppData\UsefulNotification.Core.dll` and its matching dependencies. Keep `UsefulNotification.Core.xml` beside that DLL for IntelliSense descriptions. The caller does not need the MAUI renderer project.
+Use the version `2.1.0` software development kit (SDK) with a Windows .NET 10 x64 caller. Keep the SDK in a permanent folder, separate from the application and caller projects. This installation uses `C:\E\kp\aaBenimProgramlarim\NugetPaketleri\UsefulNotification`; `Install.ps1` must remain beside its `Packages` folder.
+
+Run the installer once for the Windows account:
+
+```powershell
+pwsh -NoProfile -File "C:\E\kp\aaBenimProgramlarim\NugetPaketleri\UsefulNotification\Install.ps1"
+```
+
+It registers or repairs the `UsefulNotification` package source in the user's NuGet configuration. The source points to the adjacent `Packages` folder, shared by all that user's projects. The installer discovers NuGet's actual configured global package cache, checks the exact package versions and extracted contents, and restores incomplete or missing packages offline from the SDK. Complete cached packages skip restoration. It always runs without questions and writes detailed progress to the console; it does not configure application startup.
+
+The SDK carries `UsefulNotification.Core.2.1.0.nupkg` and its exact dependency `polly.core.8.7.0.nupkg`. The Core package includes its generated XML descriptions for IntelliSense. Each caller needs only a package reference; normal project restore finds the registered user-level feed:
+
+```xml
+<ItemGroup>
+  <PackageReference Include="UsefulNotification.Core" Version="2.1.0" />
+</ItemGroup>
+```
+
+Run `UsefulNotification.exe` once from the application's portable folder in your normal Windows session before using automatic startup from other folders. The caller then sends with the default options:
 
 ```csharp
 using UsefulNotification;
-
-NotificationClient.Options = new NotificationClientOptions
-{
-    Application = new FileInfo(
-        @"C:\Tools\UsefulNotification\UsefulNotification.exe")
-};
 
 await NotificationClient.SendAsync();
 
@@ -43,7 +55,18 @@ if (!receipt.Accepted)
     Console.Error.WriteLine($"{receipt.Failure?.Code}: {receipt.Failure?.Message}");
 ```
 
-Set `Application` to the installed launcher when the host lives elsewhere. The default endpoint is the local `UsefulNotification.v1` pipe; the version 2 client checks the host's `protocolVersion`. An already running host needs no application path. `StartApplication = false` disables automatic startup.
+All callers use the same local `UsefulNotification.v1` pipe, independently of their working directory. The version 2 client checks the host's `protocolVersion`. When the host is already running, the client connects directly. If it is absent and automatic startup is enabled, a null `Application` first checks the launcher recorded in `HKEY_CURRENT_USER\Software\UsefulNotification`, value `Executable`, then looks beside the client payload. Successful host initialization refreshes the recorded path; launch the host again after moving its portable folder.
+
+`Application` remains an optional override for a specific launcher:
+
+```csharp
+NotificationClient.Options = new()
+{
+    Application = new FileInfo(@"C:\Tools\UsefulNotification\UsefulNotification.exe")
+};
+```
+
+`StartApplication = false` disables automatic startup. Installing the SDK makes the library available to callers; the application's portable folder supplies the running host and its data.
 
 `NotificationClient.Options` owns the defaults. Operations also accept a `NotificationClientOptions` object for call-specific configuration. It contains `FileInfo`, `TimeSpan`, and actual Polly retry/timeout option objects. Send captures the complete request before awaiting a connection: later edits to a theme, sound, action, or collection affect future sends. Avoid mutating an object concurrently with the call that captures it.
 
@@ -196,7 +219,7 @@ Version 2 object shapes:
 
 The text boundary also accepts version 1 inputs: named themes, `kind`, `sticky`/`duration`, image/template path strings, named recurrence plus its old options, and legacy action fields. It converts them at the host. C# callers pass actual objects; the object serializer does not resolve theme names or scan files. A theme name in CLI/JSON is a text-interface convenience. The version 2 client requires a version 2 host; update both when moving from the earlier C# interface.
 
-For direct communication, open the `UsefulNotification.v1` named pipe on the same Windows computer. Send one UTF-8 JSON line without a byte-order mark, add a newline, flush, and read one response line. The host restricts connections to the current Windows user and limits inbound request lines to 1,048,576 characters. NotificationClientOptions.MaximumResponseCharacters separately allows 16,777,216 response characters by default; a retained history can be larger than one request.
+For direct communication, open the `UsefulNotification.v1` named pipe on the same Windows computer. Send one UTF-8 JSON line without a byte-order mark, add a newline, flush, and read one response line. The host's pipe permissions grant its Windows account access and deny network access. The C# client checks that the pipe owner matches its own Windows account and connects with identification permission, which lets the host identify the caller. The host limits inbound request lines to 1,048,576 characters. `NotificationClientOptions.MaximumResponseCharacters` separately allows 16,777,216 response characters by default; a retained history can be larger than one request.
 
 ```json
 {"operation":"send","notification":{"title":"Job completed","silent":true}}
@@ -223,3 +246,5 @@ NotificationOperation.ClearHistory removes completed occurrences while preservin
 `UserData` contains settings, notification history, language files, themes, and templates. `AppCache` contains logs and disposable renderer data. Move the whole program folder to retain its data. Stored references to files inside the program root are relative and resolve against its new location; external files retain their absolute paths. Bare PATH command names remain unchanged. Wire requests still carry the caller's absolute file references. Failed journal commits reject the operation and restore the last committed in-memory state.
 
 The field reference is the library's IntelliSense XML plus [contracts](https://github.com/muhammetozeski/UsefulNotification/blob/main/src/UsefulNotification.Core/Contracts.cs), [client](https://github.com/muhammetozeski/UsefulNotification/blob/main/src/UsefulNotification.Core/NotificationClient.cs), [actions](https://github.com/muhammetozeski/UsefulNotification/blob/main/src/UsefulNotification.Core/Actions.cs), and [recurrences](https://github.com/muhammetozeski/UsefulNotification/blob/main/src/UsefulNotification.Core/Recurrences.cs). To change the application itself, continue with [the development guide](Development.md).
+
+A normal-session host was verified with real normal and elevated sender processes from the same Windows account. Both received accepted receipts through the same endpoint.
