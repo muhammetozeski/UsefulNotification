@@ -1,8 +1,9 @@
 [CmdletBinding()]
-param()
+param([Parameter(Mandatory)][string]$OutputDirectory)
 $ErrorActionPreference = 'Stop'
 $projectRoot = $PSScriptRoot
-$publishRoot = [IO.Path]::GetFullPath((Join-Path $projectRoot 'publish'))
+$publishRoot = [IO.Path]::GetFullPath($OutputDirectory)
+if ($publishRoot.TrimEnd('\') -eq $projectRoot.TrimEnd('\') -or $publishRoot.StartsWith($projectRoot.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Choose a disposable output directory outside the source tree.' }
 $destinationRoot = Join-Path $publishRoot 'UsefulNotification'
 $packageRoot = Join-Path $publishRoot 'UsefulNotification.pending'
 if (Test-Path -LiteralPath $packageRoot) {
@@ -24,6 +25,20 @@ if (-not (Test-Path -LiteralPath (Join-Path $payloadRoot 'resources.pri'))) {
 }
 if (Test-Path -LiteralPath (Join-Path $projectRoot 'Demo\Build.ps1')) {
     & (Join-Path $projectRoot 'Demo\Build.ps1') -PackageRoot $packageRoot
+}
+if (Test-Path -LiteralPath (Join-Path $projectRoot 'Sdk\Build.ps1')) {
+    $sdkOutput = Join-Path $publishRoot 'UsefulNotification-Sdk.pending'
+    $sdkDestination = Join-Path $publishRoot 'UsefulNotification-Sdk'
+    if (Test-Path -LiteralPath $sdkOutput) {
+        if ((Resolve-Path -LiteralPath $sdkOutput).Path -ne [IO.Path]::GetFullPath($sdkOutput)) { throw 'Unexpected SDK staging path.' }
+        [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory($sdkOutput, 'OnlyErrorDialogs', 'SendToRecycleBin')
+    }
+    & (Join-Path $projectRoot 'Sdk\Build.ps1') -OutputDirectory $sdkOutput -WorkspaceDirectory (Join-Path $publishRoot 'SdkBuild')
+    if (Test-Path -LiteralPath $sdkDestination) {
+        if ((Resolve-Path -LiteralPath $sdkDestination).Path -ne [IO.Path]::GetFullPath($sdkDestination)) { throw 'Unexpected SDK destination path.' }
+        [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory($sdkDestination, 'OnlyErrorDialogs', 'SendToRecycleBin')
+    }
+    [IO.Directory]::Move($sdkOutput, $sdkDestination)
 }
 
 # The SDK apphost loads the C# launcher from AppData; no single-file linker or runtime bundle is required.
