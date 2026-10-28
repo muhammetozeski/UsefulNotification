@@ -66,6 +66,7 @@ internal sealed class StorageOptions
 /// <summary>Configures the local request channel and message budgets.</summary>
 internal sealed class TransportOptions
 {
+    public HostRegistrationOptions Registration { get; set; } = new();
     public FileInfo? Application { get; set; }
     public System.Text.Encoding Encoding { get; set; } = new System.Text.UTF8Encoding(false);
     public string PipeName { get; set; } = "UsefulNotification.v1";
@@ -74,6 +75,12 @@ internal sealed class TransportOptions
     public TimeSpan StartupTimeout { get; set; } = TimeSpan.FromSeconds(20);
     public TimeSpan PollInterval { get; set; } = TimeSpan.FromMilliseconds(200);
     public int MaximumMessageCharacters { get; set; } = 1024 * 1024;
+}
+/// <summary>Owns per-user discovery of the currently launched portable host.</summary>
+internal sealed class HostRegistrationOptions
+{
+    public string RegistryPath { get; set; } = @"Software\UsefulNotification";
+    public string ExecutableValue { get; set; } = "Executable";
 }
 /// <summary>Supplies complete behavior when a sender omits notification options.</summary>
 internal sealed class NotificationDefaults

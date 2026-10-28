@@ -2,6 +2,7 @@ using System.IO.Pipes;
 using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Security.Principal;
 using Polly;
 using Polly.Retry;
 using Polly.Timeout;
@@ -12,7 +13,7 @@ public sealed record NotificationClientOptions
 {
     /// <summary>Maximum response-line length in characters, initially 16 Mi characters so retained history can exceed one request. Increase for deliberately larger histories; inbound requests keep the host's separate limit.</summary>
     public int MaximumResponseCharacters { get; set; } = 16 * 1024 * 1024;
-    /// <summary>Optional host executable location. Null resolves the payload beside this library; set it when integrating from another application folder.</summary>
+    /// <summary>Optional host executable override. Null discovers the portable host registered by its first launch, then checks beside the client payload.</summary>
     public FileInfo? Application { get; set; }
     /// <summary>True, initially, permits a background host launch after the initial connection times out.</summary>
     public bool StartApplication { get; set; } = true;
@@ -78,21 +79,27 @@ public static class NotificationClient
         var pipeline = new ResiliencePipelineBuilder().AddTimeout(source.RequestTimeout);
         if (operation is NotificationOperation.Send or NotificationOperation.Get or NotificationOperation.List) pipeline.AddRetry(source.Retry);
         var requests = pipeline.Build();
-        NamedPipeClientStream? initial = new(".", settings.PipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
+        NamedPipeClientStream? initial = new(".", settings.PipeName, PipeDirection.InOut, PipeOptions.Asynchronous, TokenImpersonationLevel.Identification);
         try
         {
             try { await initial.ConnectAsync(settings.ConnectTimeout, cancellationToken); }
             catch (TimeoutException) when (settings.StartApplication)
             {
-                string executable = settings.Application?.FullName ?? Path.Combine(AppPaths.PayloadDirectory, AppConstants.Product.Executable);
+                string executable = (settings.Application ?? HostDiscovery.Resolve()).FullName;
                 if (!File.Exists(executable)) throw new FileNotFoundException("Start UsefulNotification or configure NotificationClient.Options.Application.", executable);
                 using var process = Process.Start(new ProcessStartInfo(executable) { UseShellExecute = false, CreateNoWindow = true, ArgumentList = { AppConstants.Product.BackgroundArgument } });
                 await initial.ConnectAsync(settings.StartupTimeout, cancellationToken);
             }
             return await requests.ExecuteAsync(async token =>
             {
-                using var pipe = Interlocked.Exchange(ref initial, null) ?? new NamedPipeClientStream(".", settings.PipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
+                using var pipe = Interlocked.Exchange(ref initial, null) ?? new NamedPipeClientStream(".", settings.PipeName, PipeDirection.InOut, PipeOptions.Asynchronous, TokenImpersonationLevel.Identification);
                 if (!pipe.IsConnected) await pipe.ConnectAsync(settings.ConnectTimeout, token);
+                if (OperatingSystem.IsWindows())
+                {
+                    using var identity = WindowsIdentity.GetCurrent();
+                    if (!Equals(pipe.GetAccessControl().GetOwner(typeof(SecurityIdentifier)), identity.User))
+                        throw new UnauthorizedAccessException("The notification host belongs to another Windows account.");
+                }
                 Log($"Request; operation={operation}; pipe={settings.PipeName}; characters={payload.Length}", PrintToConsole: false, isRun: IsLogEnabled);
                 await NotificationProtocol.WriteLineAsync(pipe, payload, token);
                 string text = await NotificationProtocol.ReadLineAsync(pipe, token, settings.MaximumResponseCharacters);

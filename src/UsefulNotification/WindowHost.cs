@@ -118,6 +118,7 @@ internal sealed class WindowHost
             Log($"Delivery not confirmed; id={entry.Id}; source={entry.Request.Source}", PrintToConsole: false, isRun: IsLogEnabled);
             MainThread.BeginInvokeOnMainThread(() => { if (Tray is not null) Tray.ToolTipText = $"{AppConstants.Product.Name}: {Localization.Strings.Failed}"; });
         };
+        RunSafely(HostDiscovery.Register);
         App.Hub.Start();
         MauiWindow toast = App.CreateSurface(true);
         toast.Created += (_, _) =>

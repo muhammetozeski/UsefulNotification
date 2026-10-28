@@ -1,5 +1,7 @@
 using System.IO.Pipes;
 using System.Text.Json;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using UsefulNotification.Localization;
 using Windows.Win32;
 namespace UsefulNotification;
@@ -479,9 +481,16 @@ internal sealed class NotificationHub : IAsyncDisposable
     }
     public async Task ListenAsync(CancellationToken cancellationToken)
     {
+        if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("The notification host requires Windows.");
+        using var identity = WindowsIdentity.GetCurrent();
+        var access = new PipeSecurity();
+        access.SetAccessRuleProtection(true, false);
+        access.SetOwner(identity.User!);
+        access.AddAccessRule(new(identity.User!, PipeAccessRights.FullControl, AccessControlType.Allow));
+        access.AddAccessRule(new(new SecurityIdentifier(WellKnownSidType.NetworkSid, null), PipeAccessRights.ReadWrite, AccessControlType.Deny));
         while (!cancellationToken.IsCancellationRequested)
         {
-            using var pipe = new NamedPipeServerStream(AppConstants.Transport.PipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+            using var pipe = NamedPipeServerStreamAcl.Create(AppConstants.Transport.PipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous, 0, 0, access);
             try
             {
                 await pipe.WaitForConnectionAsync(cancellationToken);
