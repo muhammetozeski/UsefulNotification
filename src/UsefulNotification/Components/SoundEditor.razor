@@ -103,7 +103,7 @@
     async Task Add()
     {
         PreviewCancellation?.Cancel();
-        Selected = new() { Name = Strings.NewSound, Steps = [.. AppConstants.Notifications.Sound.Steps] };
+        Selected = NotificationProtocol.Copy(NotificationSounds.Subtle) with { Id = Guid.NewGuid(), Name = Strings.NewSound };
         Draft.Sounds.Add(Selected); await MarkDirty();
     }
 

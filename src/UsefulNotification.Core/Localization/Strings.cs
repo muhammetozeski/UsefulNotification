@@ -308,4 +308,7 @@ internal static class Strings {
     public static string TextScale = "Metin ölçeği";
 
     public static string EditThemeSound = "Tema sesini düzenle";
+
+    public static string BuiltInSounds = "Yerleşik sesler";
+    public static string SavedAndCurrentSounds = "Kayıtlı ve geçerli sesler";
 }

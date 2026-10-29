@@ -302,4 +302,6 @@
   <s name="Request">This notification</s>
   <s name="TextScale">Text scale</s>
   <s name="EditThemeSound">Edit theme sound</s>
+  <s name="BuiltInSounds">Built-in sounds</s>
+  <s name="SavedAndCurrentSounds">Saved and current sounds</s>
 </strings>

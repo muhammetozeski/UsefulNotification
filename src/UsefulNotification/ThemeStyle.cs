@@ -232,9 +232,13 @@ internal static class ThemeStyle
     /// <summary>Gets the per-card palette without introducing an independent CSS token system.</summary>
     /// <param name="entry">The notification whose theme and semantic color are resolved.</param>
     /// <returns>Inline style generated from its theme objects.</returns>
-    public static string CardStyle(NotificationEntry entry)
+    public static string CardStyle(NotificationEntry entry) => CardStyle(entry.Current.Resolved?.Theme ?? ThemeCatalog.For(entry.Request));
+
+    /// <summary>Formats the same concrete frame for a theme draft preview and an accepted notification.</summary>
+    /// <param name="theme">Resolved appearance whose frame, palette and typography are rendered.</param>
+    /// <returns>The complete inline card style including independent edge widths and corners.</returns>
+    public static string CardStyle(NotificationTheme theme)
     {
-        NotificationTheme theme = entry.Current.Resolved?.Theme ?? ThemeCatalog.For(entry.Request);
         ThemePalette dark = SchemePalette(theme, light: false), light = SchemePalette(theme, light: true);
         NotificationFrame frame = theme.Frame;
         string Pair(System.Drawing.Color first, System.Drawing.Color second) => $"light-dark({first.ToCss()},{second.ToCss()})";
