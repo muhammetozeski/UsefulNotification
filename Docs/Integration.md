@@ -8,17 +8,17 @@ From the extracted application folder:
 
 ```powershell
 .\notify.exe
-.\notify.exe "Backup complete" "All files were copied." --theme Happy
-.\notify.exe "Backup failed" "The destination is unavailable." --theme Error --sticky
+.\notify.exe "Backup complete" "All files were copied." --theme Success
+.\notify.exe "Backup failed" "The destination is unavailable." --theme Urgent --sticky
 ```
 
-The empty command supplies the calling program's name, title, message, Info level, current timestamp, and normal display lifetime. The timestamp format is `yyyy.MM.dd HH.mm.ss`. Normal text expires after eight seconds of confirmed display; interaction, unfinished progress, and scheduled content normally wait for acknowledgement. `--silent` disables sound for one request.
+The empty command supplies the calling program's name, title, message and current timestamp. The timestamp format is `yyyy.MM.dd HH.mm.ss`. The selected theme supplies colors, sound and delivery together. `--silent` writes an explicit null sound override for one request; `--acknowledge-on-click` enables card-background acknowledgement while retaining Snooze. Input controls and action buttons keep their own interactions.
 
 Command durations are seconds or .NET durations such as `00:05:00`. `notify.exe --help` describes the complete syntax in the selected interface language.
 
 ## Call from C#
 
-Use the version `2.1.0` software development kit (SDK) with a Windows .NET 10 x64 caller. Keep the SDK in a permanent folder, separate from the application and caller projects. This installation uses `C:\E\kp\aaBenimProgramlarim\NugetPaketleri\UsefulNotification`; `Install.ps1` must remain beside its `Packages` folder.
+Use the version `3.0.0` software development kit (SDK) with a Windows .NET 10 x64 caller. Keep the SDK in a permanent folder, separate from the application and caller projects. This installation uses `C:\E\kp\aaBenimProgramlarim\NugetPaketleri\UsefulNotification`; `Install.ps1` must remain beside its `Packages` folder.
 
 Run the installer once for the Windows account:
 
@@ -28,11 +28,11 @@ pwsh -NoProfile -File "C:\E\kp\aaBenimProgramlarim\NugetPaketleri\UsefulNotifica
 
 It registers or repairs the `UsefulNotification` package source in the user's NuGet configuration. The source points to the adjacent `Packages` folder, shared by all that user's projects. The installer discovers NuGet's actual configured global package cache, checks the exact package versions and extracted contents, and restores incomplete or missing packages offline from the SDK. Complete cached packages skip restoration. It always runs without questions and writes detailed progress to the console; it does not configure application startup.
 
-The SDK carries `UsefulNotification.Core.2.1.0.nupkg` and its exact dependency `polly.core.8.7.0.nupkg`. The Core package includes its generated XML descriptions for IntelliSense. Each caller needs only a package reference; normal project restore finds the registered user-level feed:
+The SDK carries `UsefulNotification.Core.3.0.0.nupkg` and its exact dependency `polly.core.8.7.0.nupkg`. The Core package includes its generated XML descriptions for IntelliSense. Each caller needs only a package reference; normal project restore finds the registered user-level feed:
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="UsefulNotification.Core" Version="2.1.0" />
+  <PackageReference Include="UsefulNotification.Core" Version="3.0.0" />
 </ItemGroup>
 ```
 
@@ -47,15 +47,14 @@ NotificationReceipt receipt = await NotificationClient.SendAsync(new()
 {
     Title = "Archive ready",
     Message = "The files are available.",
-    Theme = NotificationThemes.Happy,
-    Sound = NotificationSounds.Subtle
+    Theme = NotificationThemes.Success
 });
 
 if (!receipt.Accepted)
     Console.Error.WriteLine($"{receipt.Failure?.Code}: {receipt.Failure?.Message}");
 ```
 
-All callers use the same local `UsefulNotification.v1` pipe, independently of their working directory. The version 2 client checks the host's `protocolVersion`. When the host is already running, the client connects directly. If it is absent and automatic startup is enabled, a null `Application` first checks the launcher recorded in `HKEY_CURRENT_USER\Software\UsefulNotification`, value `Executable`, then looks beside the client payload. Successful host initialization refreshes the recorded path; launch the host again after moving its portable folder.
+All callers use the same local `UsefulNotification.v1` pipe, independently of their working directory. The version 3 client checks the host's `protocolVersion`. When the host is already running, the client connects directly. If it is absent and automatic startup is enabled, a null `Application` first checks the launcher recorded in `HKEY_CURRENT_USER\Software\UsefulNotification`, value `Executable`, then looks beside the client payload. Successful host initialization refreshes the recorded path; launch the host again after moving its portable folder.
 
 `Application` remains an optional override for a specific launcher:
 
@@ -72,6 +71,43 @@ NotificationClient.Options = new()
 
 Host rejections return `Accepted = false` with a `NotificationFailure.Code`. Serialization, cancellation, startup, and transport failures can throw; handle them at the calling program's operation boundary.
 
+## Select one complete theme
+
+`NotificationThemes.Base`, `Daily`, `Success`, `Attention`, `Urgent` and `Reminder` are actual theme objects. A theme owns colors, typography, frame, sound, lifetime, queue priority and acknowledgement behavior. Selecting a theme uses those values together. Optional request overrides replace only the fields you supply; omitted fields remain inherited.
+
+```csharp
+using System.Drawing;
+using UsefulNotification;
+
+var buildTheme = new NotificationTheme
+{
+    Id = "build-review",
+    Name = "Build review",
+    Parent = NotificationThemes.Success,
+    Overrides = new()
+    {
+        Palette = new() { Accent = new(Color.CornflowerBlue) },
+        Lifetime = new(NotificationLifetimes.UntilAcknowledged)
+    }
+};
+
+await NotificationClient.SendAsync(new()
+{
+    Title = "Build complete",
+    Theme = buildTheme,
+    Interaction = NotificationInteractions.ClickToAcknowledge,
+    Overrides = new() { Sound = new(null) }
+});
+```
+
+`new(null)` explicitly mutes this send. Omitting `Overrides.Sound` retains the inherited sound. `NotificationInteractions.ClickToAcknowledge` enables card-background acknowledgement and retains Snooze; `NotificationInteractions.Actions` uses explicit buttons. Links, inputs, checklist controls and Snooze consume their own interaction before a card-background acknowledgement.
+
+`ThemeResolver.Resolve(request)` returns detached effective values, including `Theme`, `Sound`, `Lifetime`, `Priority`, `Interaction` and `FieldOrigins`. Accepted entries carry their resolved snapshot, so later preset or catalog edits do not alter an already accepted notification. The appearance guide describes parent themes and file-backed definitions.
+
+```powershell
+.\notify.exe "Build complete" "Review the output." --theme Success
+.\notify.exe "Read this" "Click the card or postpone it." --theme Reminder --acknowledge-on-click --silent
+```
 ## Receive a user's decision
 
 ```csharp
@@ -202,13 +238,15 @@ The command accepts a request object from a file or standard input:
 '{"title":"Worker","message":"Job completed","silent":true}' | .\notify.exe --stdin
 ```
 
-Version 2 object shapes:
+Version 3 object shapes:
 
 ```json
 {
   "title": "Download",
   "tag": "current-download",
-  "lifetime": { "mode": "acknowledge" },
+  "theme": "Reminder",
+  "interaction": { "clickToAcknowledge": true, "showSnooze": true },
+  "overrides": { "sound": null },
   "progress": { "value": 35, "maximum": 1000, "label": "Receiving files" },
   "schedule": {
     "after": "00:05:00",
@@ -217,15 +255,15 @@ Version 2 object shapes:
 }
 ```
 
-The text boundary also accepts version 1 inputs: named themes, `kind`, `sticky`/`duration`, image/template path strings, named recurrence plus its old options, and legacy action fields. It converts them at the host. C# callers pass actual objects; the object serializer does not resolve theme names or scan files. A theme name in CLI/JSON is a text-interface convenience. The version 2 client requires a version 2 host; update both when moving from the earlier C# interface.
+The text boundary also accepts version 1 inputs: named themes, `kind`, `sticky`/`duration`, image/template path strings, named recurrence plus its old options, and legacy action fields. It converts them at the host. C# callers pass actual objects; the object serializer does not resolve theme names or scan files. A theme name in CLI/JSON is a text-interface convenience. The version 3 client requires a version 3 host; update both when moving from the earlier C# interface.
 
-For direct communication, open the `UsefulNotification.v1` named pipe on the same Windows computer. Send one UTF-8 JSON line without a byte-order mark, add a newline, flush, and read one response line. The host's pipe permissions grant its Windows account access and deny network access. The C# client checks that the pipe owner matches its own Windows account and connects with identification permission, which lets the host identify the caller. The host limits inbound request lines to 1,048,576 characters. `NotificationClientOptions.MaximumResponseCharacters` separately allows 16,777,216 response characters by default; a retained history can be larger than one request.
+For direct communication, open the `UsefulNotification.v1` named pipe on the same Windows computer. Send one UTF-8 JSON line without a byte-order mark, add a newline, flush, and read one response line. The host's pipe permissions grant its Windows account access and deny network access. The C# client checks that the pipe owner matches its own Windows account and connects with identification permission, which lets the host identify the caller. The host limits inbound request lines to 1,048,576 characters. `NotificationClientOptions.MaximumResponseCharacters` separately allows 33,554,432 response characters by default; a retained history can be larger than one request.
 
 ```json
-{"operation":"send","notification":{"title":"Job completed","silent":true}}
+{"operation":"send","notification":{"title":"Job completed","theme":"Success","overrides":{"sound":null}}}
 ```
 
-An accepted response contains `accepted`, `id`, `occurrenceId`, and `protocolVersion: 2`. Acceptance follows journal persistence; screen delivery is recorded separately in the occurrence's `visibleAt`. A rejection contains `failure.code` and `failure.message`.
+A version-three command supplies `protocolVersion: 3`; the current SDK and command sender do this automatically. The host responds with version three for those callers and version two for older callers that omit the field or request two. An accepted response contains `accepted`, `id`, and `occurrenceId`. Acceptance follows journal persistence; screen delivery is recorded separately in the occurrence's `visibleAt`. A rejection contains `failure.code` and `failure.message`.
 
 Partial updates use field presence directly:
 

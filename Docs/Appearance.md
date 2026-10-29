@@ -1,68 +1,82 @@
-# HTML, themes, and frames
+# Themes, inheritance and HTML cards
 
-UsefulNotification removes the native Windows caption and border. The visible card and its frame are HTML. C# theme objects generate the shipped CSS, including colors, typography, spacing, and borders. The shipped stylesheet has no parallel CSS custom-property system.
+UsefulNotification removes the native Windows caption and border. The visible card and its frame are HTML. C# theme objects generate the shipped CSS, including colors, typography, spacing and borders. A complete notification theme also supplies its sound, lifetime, queue priority and acknowledgement policy.
 
-The default toast width is 392 physical pixels. Content determines height. The native host compensates for display scaling; geometry policies are internal application settings in `AppConstants.Windows` for source developers. Theme dimensions are logical CSS pixels.
+The default toast width is 410 logical pixels. Content determines height; Windows display scaling and the personal text-scale preference remain active. Geometry policies are internal application settings in `AppConstants.Windows`, separate from the per-card appearance.
 
-## Use or extend an actual theme
+## Select or inherit an actual theme
 
-C# callers choose complete objects such as `NotificationThemes.Info`, `NotificationThemes.Warn`, `NotificationThemes.Error`, and `NotificationThemes.Happy`. The other built-ins are Dark, Light, Blue, Emerald, Purple, Amber, Crimson, and HighContrast. Semantic themes supply their level when the request omits one.
+The primary built-ins are `NotificationThemes.Base`, `Daily`, `Success`, `Attention`, `Urgent` and `Reminder`. `Base` provides the common defaults. The other presets express a complete notification purpose, including their sound and delivery. Legacy palette names remain accepted for existing callers and files.
 
 ```csharp
 using System.Drawing;
 using UsefulNotification;
 
-var theme = NotificationThemes.Error with
+var buildTheme = new NotificationTheme
 {
-    Frame = NotificationThemes.Error.Frame with
+    Id = "build-review",
+    Name = "Build review",
+    Parent = NotificationThemes.Success,
+    Overrides = new()
     {
-        Pattern = BorderPattern.Dashed,
-        CornerRadius = 0,
-        AccentEdges = BorderEdges.All,
-        AccentColor = Color.Firebrick,
-        Thickness = new() { Top = 2, Right = 2, Bottom = 2, Left = 5 }
+        Palette = new() { Accent = new(Color.CornflowerBlue) },
+        Frame = new() { CornerRadius = new(8) },
+        Lifetime = new(NotificationLifetimes.UntilAcknowledged)
     }
 };
 
 await NotificationClient.SendAsync(new()
 {
-    Title = "Build failed",
-    Message = "Open the build log for details.",
-    Theme = theme
+    Title = "Build complete",
+    Theme = buildTheme,
+    Interaction = NotificationInteractions.ClickToAcknowledge,
+    Overrides = new() { Sound = new(null) }
 });
 ```
 
-Presets are mutable objects. A record `with` expression makes a shallow copy: copy the nested object you intend to edit, as above, to keep the shared preset unchanged. Send captures a detached payload before waiting for the connection. A later preset edit affects subsequent sends.
+`Parent` is an actual `NotificationTheme` object in C#. A derived theme inherits every field it does not override. Each field in `NotificationOverrides.Palette`, `Typography`, `Layout` and `Frame` is independent. `new(value)` supplies that field; omission inherits it. `Sound = new(null)` explicitly mutes sound. Lifetime, priority and interaction support the same presence-aware override model.
 
-`NotificationAppearance` can replace a request's Palette, Typography, Layout, or Frame independently. Each supplied section is a complete section with its model defaults; it is not a property-by-property merge into the selected section. Ordinary cards receive scoped CSS, so one sender's appearance does not change its neighbours.
+A simple Accent or Background override also changes the inherited paired light/dark values, unless the same override explicitly supplies those pairs. `LightBackground`, `DarkBackground`, `LightAccent` and `DarkAccent` can instead define separate values for the system color scheme. CSS follows the system appearance from those values.
 
+Presets are mutable definitions. `ThemeResolver.Resolve(request)` returns the detached effective appearance, sound and delivery, plus `FieldOrigins` identifying which theme or request supplied each value. The host stores the accepted snapshot with the request. A later parent or preset edit affects subsequent sends. Resolution rejects parent cycles and invalid values before acceptance.
+
+Existing `Appearance`, `Sound`, `Silent`, `Level`, `Priority` and `Lifetime` request fields remain compatibility inputs. New callers should choose one complete theme and use `Overrides` for intentional differences. The new model merges individual supplied fields; the legacy `NotificationAppearance` still replaces whole supplied sections.
+
+| Theme | Parent | Sound | Lifetime | Queue priority |
+| --- | --- | --- | --- | --- |
+| Base | Root | Gentle bell (`Subtle`) | 8 seconds | Normal |
+| Daily | Base | Inherited gentle bell | Inherited 8 seconds | Normal |
+| Success | Daily | Gentle positive two notes (`Completed`) | 6 seconds | Normal |
+| Attention | Daily | Clear twin tones (`DoubleAlert`) | 12 seconds | Normal |
+| Urgent | Attention | Exactly three long fixed-pitch beeps (`Attention`) | Until acknowledged | High |
+| Reminder | Daily | Warm plucked tones (`Reminder`) | Until acknowledged | Normal |
+
+All six initially allow card-background acknowledgement and retain Snooze. Content requiring input or progress can select the content-aware interaction and lifetime when those values remain inherited from Base. Sounds honor the application's master sound preference.
 ## File-backed themes for scripts and the panel
 
-Place a `NotificationTheme` JSON document under `UserData\Themes` in the portable application folder. Use Reload after editing. The theme contains `palette`, `typography`, `layout`, and `frame` objects. See the actual [theme models](https://github.com/muhammetozeski/UsefulNotification/blob/main/src/UsefulNotification.Core/Themes.cs) and their IntelliSense descriptions for all fields.
+Place a theme JSON document under `UserData\Themes` in the portable application folder. Use Reload after editing. A stored parent is the referenced theme's stable ID; the C# library uses the actual parent object. Names are editable display labels. The catalog resolves inheritance before accepting notifications and reports unresolved parents, duplicate IDs and parent cycles.
 
 ```json
 {
+  "id": "workshop",
   "name": "Workshop",
-  "frame": {
-    "thickness": { "top": 2, "right": 2, "bottom": 2, "left": 6 },
-    "cornerRadius": 0,
-    "pattern": "solid",
-    "accentEdges": "all",
-    "accentColor": "#70a5cf"
+  "parent": "builtin:success",
+  "overrides": {
+    "palette": { "accent": "#70a5cf" },
+    "frame": { "cornerRadius": 8 },
+    "sound": null,
+    "lifetime": { "mode": "acknowledge" }
   }
 }
 ```
 
-Omitted sections use model defaults. Colors accept HTML color names or `#RRGGBB`; serialized colors use `#RRGGBBAA`, with alpha last. A loaded theme with an existing name replaces that name in the host's file-backed catalog.
-
-Select this theme at the text boundary:
+Colors accept HTML color names or `#RRGGBB`; serialized colors use `#RRGGBBAA`, with alpha last. Select a loaded theme at the text boundary:
 
 ```powershell
 .\notify.exe "Workshop" "The report is ready." --theme Workshop
 ```
 
-CLI and JSON theme names are resolved case-insensitively by the host. C# callers supply their complete `NotificationTheme` object directly.
-
+CLI and JSON theme names are resolved case-insensitively by the host. `--theme` selects appearance, sound and delivery together. `--silent`, `--sound`, `--duration`, `--sticky` and `--priority` add explicit per-send overrides. `--acknowledge-on-click` enables background-click acknowledgement while preserving Snooze. C# callers pass actual theme and interaction objects.
 ## Replace the complete card with HTML
 
 The host creates its editable default `UserData\Templates\Card.html` on first launch and preserves existing user files. Use the default or a specific HTML file:

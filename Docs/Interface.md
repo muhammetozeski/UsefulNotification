@@ -20,7 +20,7 @@ For this Windows App SDK runtime, copy DisplayArea.FindAll through Count/index a
 
 ## Appearance and evidence
 
-C# theme objects own colors, typography, layout, backdrop and card frame. The default is flat with one semantic accent strip; semantic presets align the strip, icon, sender and primary action. The snooze chooser is in measured document flow so the toast can grow without clipping it.
+C# theme objects own colors, typography, layout, backdrop and card frame. Primary themes supply coordinated colors, sound and delivery. The card uses a quiet frame with an inward accent glow and light/dark values that follow the system appearance. Click acknowledgement leaves input controls, links, actions and Snooze with their own interaction. The snooze chooser is in measured document flow so the toast can grow without clipping it.
 
 Disposable checks exercise actual Razor editor handlers for row identity, independent drafts, discard/cancel, filtering and scoped history deletion. Production components are also server-rendered for visual inspection. Pointer lifecycle checks exercise down/move/release, queued movement after release, cancellation, capture loss, blur and secondary clicks. These checks complement user mouse feedback on the running native application.
 The client uses a distinct adjustable response budget so the normal 2,000-entry history can be listed without relaxing the host request limit. Send acceptance links are retained with bounded history, including source/tag upserts, so a retry does not replace newer content or create another display.
