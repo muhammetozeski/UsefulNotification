@@ -85,6 +85,7 @@ internal sealed class DemoWindow : Form
     readonly Button Common = new() { AutoSize = true };
     readonly Button Cleanup = new() { AutoSize = true };
     readonly Button ClearOutput = new() { AutoSize = true };
+    readonly Button Compose = new() { AutoSize = true };
     readonly List<Example> Catalog;
     Example? Selected;
     Process? CurrentProcess;
@@ -116,7 +117,7 @@ internal sealed class DemoWindow : Form
         work.RowStyles.Add(new(SizeType.AutoSize)); work.RowStyles.Add(new(SizeType.Absolute, 70)); work.RowStyles.Add(new(SizeType.Absolute, 52)); work.RowStyles.Add(new(SizeType.AutoSize)); work.RowStyles.Add(new(SizeType.Percent, 100)); work.RowStyles.Add(new(SizeType.AutoSize));
         work.Controls.Add(Heading, 0, 0); work.Controls.Add(Instructions, 0, 1); work.Controls.Add(Expected, 0, 2);
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = true, Margin = new Padding(0, 8, 0, 8) };
-        buttons.Controls.AddRange([Run, Stop, Copy, Save, Reset, Common, Cleanup]); work.Controls.Add(buttons, 0, 3);
+        buttons.Controls.AddRange([Compose, Run, Stop, Copy, Save, Reset, Common, Cleanup]); work.Controls.Add(buttons, 0, 3);
         var editor = new SplitContainer { Size = Options.Window, Dock = DockStyle.Fill, Orientation = Orientation.Horizontal, SplitterDistance = 320 };
         var codePane = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2 };
         codePane.ColumnStyles.Add(new(SizeType.Percent, 100));
@@ -135,6 +136,7 @@ internal sealed class DemoWindow : Form
         Copy.Click += (_, _) => Guard(() => Clipboard.SetText(File.ReadAllText(Path.Combine(Options.Demo, "Runner.cs.template")).Replace("args[0]", JsonSerializer.Serialize(Path.GetFullPath(HostPath.Text))).Replace("args[1]", JsonSerializer.Serialize(Path.Combine(Options.Demo, "Assets"))).Replace("{{CODE}}", Code.Text))); Save.Click += (_, _) => Guard(SaveCode); Reset.Click += (_, _) => { if (Selected is not null && ConfirmDiscard()) LoadCode(Selected, false); };
         Common.Click += (_, _) => MessageBox.Show(this, "using UsefulNotification;\n\nNotificationClient.Options = new()\n{\n    Application = new FileInfo(@\"" + HostPath.Text + "\")\n};\n\n// token: cancellation token\n// assets: Demo/Assets directory\n// Print(value): safe result output", T("Ortak kurulum", "Shared setup"));
         Cleanup.Click += async (_, _) => await CleanupAsync(); ClearOutput.Click += (_, _) => Output.Clear();
+        Compose.Click += (_, _) => new NotificationPicker(Options, HostPath.Text, English).Show(this);
         FormClosing += async (_, args) => { if (ClosingAfterStop) return; if (!ConfirmDiscard()) { args.Cancel = true; return; } if (Running) { args.Cancel = true; await StopAsync(); if (Execution is not null) await Execution; ClosingAfterStop = true; Close(); } };
         KeyPreview = true; KeyDown += async (_, args) => { if (args.KeyCode == Keys.F5 && !Running) { args.Handled = true; Execution = RunExampleAsync(); await Execution; } };
         ApplyLanguage();
@@ -148,6 +150,7 @@ internal sealed class DemoWindow : Form
     /// <summary>Rebuilds navigation labels while retaining the selected case and edited code.</summary>
     void ApplyLanguage()
     {
+        Compose.Text = T("Bildirim oluştur", "Compose notification");
         HostLabel.Text = T("Bildirim programı", "Notification program"); Browse.Text = T("Seç", "Browse"); Run.Text = T("Çalıştır · F5", "Run · F5"); Stop.Text = T("Durdur", "Stop"); Copy.Text = T("Tam kodu kopyala", "Copy complete code"); Save.Text = T("Kodu kaydet", "Save code"); Reset.Text = T("Özgün kod", "Original code"); Common.Text = T("Ortak kurulum", "Shared setup"); Cleanup.Text = T("Demo bildirimlerini sil", "Delete demo notifications"); ClearOutput.Text = T("Çıktıyı temizle", "Clear output"); CodeLabel.Text = T("Derlenip çalıştırılacak C# kodu (düzenlenebilir)", "C# code to compile and run (editable)"); OutputLabel.Text = T("Gerçek sonuç / yanıt / hata", "Actual result / reply / error");
         Loading = true; Examples.BeginUpdate(); Examples.Nodes.Clear();
         foreach (var group in Catalog.GroupBy(item => T(item.Category, item.CategoryEn)))
@@ -270,4 +273,121 @@ internal sealed class DemoWindow : Form
 
     /// <summary>Contains the final failure of a small synchronous UI action.</summary>
     void Guard(Action action) { try { action(); } catch (Exception error) { Append(error.ToString()); } }
+}
+
+/// <summary>Combines actual public presets and sends their text-boundary representation to notify.exe without compiling an example.</summary>
+internal sealed class NotificationPicker : Form
+{
+    /// <summary>Retains the selected value directly on its radio button.</summary>
+    sealed record Choice<T>(string Label, T Value);
+    /// <summary>Combines an optional sound definition with explicit sound suppression.</summary>
+    sealed record SoundChoice(SoundPattern? Pattern = null, bool Silent = false);
+    readonly bool English;
+    readonly string CommandPath;
+    readonly string Source;
+    readonly TextBox TitleInput = new() { Dock = DockStyle.Fill };
+    readonly TextBox MessageInput = new() { Dock = DockStyle.Fill };
+    readonly TextBox Preview = new() { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical };
+    readonly TextBox Result = new() { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical };
+    readonly Button Send = new() { AutoSize = true };
+    readonly Func<NotificationTheme?> Theme;
+    readonly Func<NotificationLevel?> Level;
+    readonly Func<NotificationPriority> Priority;
+    readonly Func<SoundChoice> Sound;
+    readonly Func<NotificationLifetime?> Lifetime;
+    bool Sending;
+
+    /// <summary>Builds independent radio groups; opening this window never sends or compiles anything.</summary>
+    /// <param name="options">Existing demo dimensions and appearance.</param>
+    /// <param name="host">Selected portable launcher; notify.exe is resolved beside it.</param>
+    /// <param name="english">Whether captions should use English.</param>
+    public NotificationPicker(DemoOptions options, string host, bool english)
+    {
+        English = english; Text = T("Bildirim oluştur", "Compose notification"); Font = options.TextFont;
+        Size = new(980, 850); MinimumSize = new(820, 650); StartPosition = FormStartPosition.CenterParent;
+        CommandPath = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(host))!, "notify.exe");
+        Source = Path.GetFileNameWithoutExtension(options.ExampleAssembly);
+        var root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = options.Padding, RowCount = 4 };
+        root.ColumnStyles.Add(new(SizeType.Percent, 100));
+        root.RowStyles.Add(new(SizeType.Percent, 65)); root.RowStyles.Add(new(SizeType.AutoSize));
+        root.RowStyles.Add(new(SizeType.Percent, 20)); root.RowStyles.Add(new(SizeType.Percent, 15));
+        var scroll = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
+        var choices = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 1 };
+        choices.ColumnStyles.Add(new(SizeType.Percent, 100)); scroll.Controls.Add(choices);
+        var content = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2 };
+        content.ColumnStyles.Add(new(SizeType.AutoSize)); content.ColumnStyles.Add(new(SizeType.Percent, 100));
+        content.Controls.Add(new Label { Text = T("Başlık", "Title"), AutoSize = true }, 0, 0); content.Controls.Add(TitleInput, 1, 0);
+        content.Controls.Add(new Label { Text = T("Mesaj", "Message"), AutoSize = true }, 0, 1); content.Controls.Add(MessageInput, 1, 1);
+        TitleInput.Text = T("Deneme", "Preview"); MessageInput.Text = T("Bildirim içeriği", "Notification content"); choices.Controls.Add(content);
+        Theme = Group(choices, T("Tema · görünüm", "Theme · appearance"), new[] { new Choice<NotificationTheme?>(T("Panelde seçili", "Panel selection"), null) }.Concat(NotificationThemes.All.Select(theme => new Choice<NotificationTheme?>(theme.Name, theme))));
+        Level = Group(choices, T("Seviye · vurgulu kenarlık rengi", "Level · accent border color"), new[] { new Choice<NotificationLevel?>(T("Temanın varsayılanı", "Theme default"), null) }.Concat(Enum.GetValues<NotificationLevel>().Select(level => new Choice<NotificationLevel?>(level.ToString(), level))));
+        Priority = Group(choices, T("Öncelik · kuyruk sırası", "Priority · queue order"), new[] { NotificationPriority.Normal, NotificationPriority.Low, NotificationPriority.High, NotificationPriority.Urgent }.Select(priority => new Choice<NotificationPriority>(priority.ToString(), priority)));
+        Sound = Group(choices, T("Ses", "Sound"), new[] { new Choice<SoundChoice>(T("Panelde seçili", "Panel selection"), new()), new Choice<SoundChoice>(T("Sessiz", "Silent"), new(Silent: true)) }.Concat(NotificationSounds.All.Select(sound => new Choice<SoundChoice>(sound.Name, new(sound)))));
+        Lifetime = Group(choices, T("Gösterim süresi", "Display lifetime"), new[] { new Choice<NotificationLifetime?>(T("Varsayılan", "Default"), null), new Choice<NotificationLifetime?>(T("8 saniye", "8 seconds"), NotificationLifetimes.Default), new Choice<NotificationLifetime?>(T("Kapatana kadar", "Until dismissed"), NotificationLifetimes.UntilAcknowledged) });
+        Send.Text = T("Bildirim yolla", "Send notification"); Send.BackColor = options.Accent; Send.ForeColor = Color.White;
+        root.Controls.Add(scroll, 0, 0); root.Controls.Add(Send, 0, 1); root.Controls.Add(Preview, 0, 2); root.Controls.Add(Result, 0, 3); Controls.Add(root);
+        Send.Click += async (_, _) => await SendAsync();
+        TitleInput.TextChanged += (_, _) => RefreshPreview(); MessageInput.TextChanged += (_, _) => RefreshPreview();
+        foreach (var radio in choices.Controls.OfType<GroupBox>().SelectMany(group => group.Controls.OfType<FlowLayoutPanel>()).SelectMany(flow => flow.Controls.OfType<RadioButton>())) radio.CheckedChanged += (_, _) => RefreshPreview();
+        FormClosing += (_, args) => { if (Sending) args.Cancel = true; };
+        RefreshPreview();
+    }
+
+    /// <summary>Chooses the requested interface language.</summary>
+    string T(string turkish, string english) => English ? english : turkish;
+
+    /// <summary>Creates one mutually exclusive group and returns its actual selected object.</summary>
+    /// <typeparam name="T">The preset or finite setting retained by the controls.</typeparam>
+    /// <param name="parent">Scrollable settings layout.</param>
+    /// <param name="caption">Visible group heading.</param>
+    /// <param name="choices">Labeled values; the first value is initially selected.</param>
+    /// <returns>A reader of the selected value without name-to-object lookup.</returns>
+    static Func<T> Group<T>(TableLayoutPanel parent, string caption, IEnumerable<Choice<T>> choices)
+    {
+        var group = new GroupBox { Text = caption, Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(8, 22, 8, 8), Margin = new Padding(0, 6, 0, 6) };
+        var flow = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, WrapContents = true };
+        foreach (var choice in choices) flow.Controls.Add(new RadioButton { Text = choice.Label, Tag = choice, AutoSize = true, Checked = flow.Controls.Count == 0, Margin = new Padding(6) });
+        group.Controls.Add(flow); parent.Controls.Add(group);
+        return () => ((Choice<T>)flow.Controls.OfType<RadioButton>().Single(radio => radio.Checked).Tag!).Value;
+    }
+
+    /// <summary>Projects only supported text-boundary fields, preserving omission for panel defaults.</summary>
+    /// <returns>The JSON body supplied verbatim to notify.exe standard input.</returns>
+    string Request()
+    {
+        var request = new Dictionary<string, object?> { ["title"] = TitleInput.Text, ["message"] = MessageInput.Text, ["source"] = Source, ["priority"] = Priority().ToString() };
+        if (Theme() is { } theme) request["theme"] = theme.Name;
+        if (Level() is { } level) request["level"] = level.ToString();
+        var sound = Sound();
+        if (sound.Silent) request["silent"] = true;
+        if (sound.Pattern is { } pattern) request["sound"] = new { steps = pattern.Steps.Select(step => new { frequency = step.Frequency, duration = step.Duration.ToString(), pause = step.Pause.ToString() }) };
+        if (Lifetime() is AcknowledgedLifetime) request["lifetime"] = new { mode = "acknowledge" };
+        else if (Lifetime() is ExpiringLifetime expiry) request["lifetime"] = new { mode = "expire", duration = expiry.Duration.ToString() };
+        return JsonSerializer.Serialize(request, new JsonSerializerOptions { WriteIndented = true });
+    }
+
+    /// <summary>Displays the exact executable and body that will be sent.</summary>
+    void RefreshPreview() => Preview.Text = "\"" + CommandPath + "\" --stdin" + Environment.NewLine + Request();
+
+    /// <summary>Sends directly to the existing command executable, awaits its actual response and never invokes a compiler.</summary>
+    async Task SendAsync()
+    {
+        if (Sending) return;
+        Sending = true; Send.Enabled = false;
+        try
+        {
+            if (!File.Exists(CommandPath)) throw new FileNotFoundException("notify.exe was not found beside the selected host.", CommandPath);
+            string request = Request(); Preview.Text = "\"" + CommandPath + "\" --stdin" + Environment.NewLine + request;
+            var start = new ProcessStartInfo(CommandPath) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true };
+            start.ArgumentList.Add("--stdin");
+            using var process = Process.Start(start) ?? throw new IOException("The notification sender did not start.");
+            Task<string> output = process.StandardOutput.ReadToEndAsync(), error = process.StandardError.ReadToEndAsync();
+            await process.StandardInput.WriteAsync(request); process.StandardInput.Close();
+            await process.WaitForExitAsync();
+            Result.Text = (await output) + (await error);
+            if (process.ExitCode != 0) Result.AppendText(Environment.NewLine + T("Gönderim başarısız. Çıkış kodu: ", "Send failed. Exit code: ") + process.ExitCode);
+        }
+        catch (Exception error) { Result.Text = error.ToString(); }
+        finally { Sending = false; Send.Enabled = true; }
+    }
 }
