@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$PackageRoot = (Join-Path (Split-Path $PSScriptRoot) 'publish\UsefulNotification'),
+    [string]$PackageRoot,
     [string]$ExampleSource,
     [string]$OutputDirectory,
     [string]$PayloadDirectory,
@@ -21,6 +21,12 @@ $references = @('Microsoft.NETCore.App.Ref','Microsoft.WindowsDesktop.App.Ref') 
 }
 
 function Compile-CSharp([string]$Source, [string]$Output, [bool]$Gui) {
+    $sourceRoot = Split-Path $PSScriptRoot
+    $absoluteOutput = [IO.Path]::GetFullPath($Output)
+    if ((Test-Path -LiteralPath (Join-Path $sourceRoot 'UsefulNotification.slnx')) -and
+        $absoluteOutput.StartsWith($sourceRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Keep demo binaries and compiler intermediates outside the source repository.'
+    }
     # All compiler inputs are explicit; no project build, package restore or manual downloads are involved.
     [IO.Directory]::CreateDirectory((Split-Path $Output)) | Out-Null
     $arguments = [Collections.Generic.List[string]]::new()
@@ -37,7 +43,10 @@ function Compile-CSharp([string]$Source, [string]$Output, [bool]$Gui) {
     [IO.File]::WriteAllText([IO.Path]::ChangeExtension($Output, '.runtimeconfig.json'), ($runtime | ConvertTo-Json -Depth 5))
 }
 
-if (-not $PayloadDirectory) { $PayloadDirectory = Join-Path $PackageRoot 'AppData' }
+if (-not $PayloadDirectory) {
+    if (-not $PackageRoot) { throw 'PackageRoot or PayloadDirectory must point to an external published application.' }
+    $PayloadDirectory = Join-Path $PackageRoot 'AppData'
+}
 if ($ExampleSource) {
     if (-not $OutputDirectory) { throw 'OutputDirectory is required for an example.' }
     foreach ($name in @('UsefulNotification.Core.dll','Polly.Core.dll')) { Copy-Item -LiteralPath (Join-Path $PayloadDirectory $name) -Destination $OutputDirectory -Force }
@@ -59,6 +68,7 @@ if ($ValidateExamples) {
     Write-Output ('Compiled examples: ' + $catalog.Count)
     exit
 }
+if (-not $PackageRoot) { throw 'PackageRoot is required when building the demo application.' }
 Compile-CSharp (Join-Path $PSScriptRoot 'Program.cs') (Join-Path $PayloadDirectory 'UsefulNotification.Demo.dll') $true
 Add-Type -LiteralPath (Join-Path $sdk 'Microsoft.NET.HostModel.dll')
 $pack = Get-ChildItem -LiteralPath (Join-Path $dotnetRoot 'packs\Microsoft.NETCore.App.Host.win-x64') -Directory | Where-Object Name -Like '10.*' | Sort-Object { [version]$_.Name } -Descending | Select-Object -First 1

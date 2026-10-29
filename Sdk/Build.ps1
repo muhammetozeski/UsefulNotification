@@ -18,6 +18,12 @@ $repository = Split-Path $PSScriptRoot -Parent
 $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
 if (!$WorkspaceDirectory) { $WorkspaceDirectory = "$OutputDirectory.build" }
 $WorkspaceDirectory = [IO.Path]::GetFullPath($WorkspaceDirectory)
+foreach ($path in @($OutputDirectory, $WorkspaceDirectory)) {
+    if ($path.Equals($repository, [StringComparison]::OrdinalIgnoreCase) -or
+        $path.StartsWith($repository + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Keep SDK output and build intermediates outside the source repository.'
+    }
+}
 if ((Test-Path -LiteralPath $OutputDirectory) -and
     (Get-ChildItem -LiteralPath $OutputDirectory -Force | Select-Object -First 1)) {
     throw "OutputDirectory must be empty: $OutputDirectory"
@@ -111,8 +117,7 @@ NotificationReceipt receipt = await NotificationClient.SendAsync(new()
 {
     Title = "Backup complete",
     Message = "All files were copied.",
-    Theme = NotificationThemes.Happy,
-    Sound = NotificationSounds.Subtle
+    Theme = NotificationThemes.Success
 });
 Console.WriteLine(receipt.Accepted ? "Accepted" : receipt.Failure?.Message);
 '@ | Set-Content -LiteralPath (Join-Path $example 'Program.cs') -Encoding utf8

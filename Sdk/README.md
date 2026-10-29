@@ -19,7 +19,7 @@ Every invocation writes the source, configuration and cache paths, the state of 
 Add the package to a Windows .NET 10 x64 project:
 
 ```xml
-<PackageReference Include="UsefulNotification.Core" Version="2.1.0" />
+<PackageReference Include="UsefulNotification.Core" Version="3.0.0" />
 ```
 
 NuGet resolves the DLL, documentation and dependencies for each new project. You do not copy these files into projects. A project that deliberately clears account-level package sources needs to retain the registered local source when its global cache has been cleared.
@@ -31,8 +31,7 @@ NotificationReceipt receipt = await NotificationClient.SendAsync(new()
 {
     Title = "Backup complete",
     Message = "All files were copied.",
-    Theme = NotificationThemes.Happy,
-    Sound = NotificationSounds.Subtle
+    Theme = NotificationThemes.Success
 });
 ```
 

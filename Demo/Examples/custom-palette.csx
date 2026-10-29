@@ -1,15 +1,16 @@
 var receipt = await NotificationClient.SendAsync(new()
 {
-    Title = "Per-request appearance",
-    Message = "A custom palette, typography and spacing for this request.",
-    Appearance = new()
+    Title = "Per-send inherited overrides",
+    Message = "Only the accent, text sizes and spacing differ from Success.",
+    Theme = NotificationThemes.Success,
+    Overrides = new()
     {
-        Palette = NotificationThemes.Light.Palette with { Accent = Color.DarkSlateBlue },
-        Typography = NotificationThemes.Light.Typography with { CardTitle = 20, Body = 14 },
-        Layout = NotificationThemes.Light.Layout with { Padding = 16 }
-    },
-    Lifetime = NotificationLifetimes.UntilAcknowledged,
-    Silent = true
+        Palette = new() { Accent = new(Color.DarkSlateBlue) },
+        Typography = new() { CardTitle = new(20), Body = new(14) },
+        Layout = new() { Padding = new(16) },
+        Lifetime = new(NotificationLifetimes.UntilAcknowledged),
+        Sound = new(null)
+    }
 }, cancellationToken: token);
 Print(receipt);
 if (receipt.Accepted) Print(await NotificationClient.WaitAsync(receipt, cancellationToken: token));

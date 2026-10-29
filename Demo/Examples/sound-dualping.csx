@@ -1,3 +1,3 @@
-var receipt = await NotificationClient.SendAsync(new() { Title = "DualPing sound", Message = "Listen to the selected preset.", Sound = NotificationSounds.DualPing, Silent = false, Lifetime = new ExpiringLifetime(TimeSpan.FromSeconds(3)) }, cancellationToken: token);
+var receipt = await NotificationClient.SendAsync(new() { Title = "DoubleAlert sound", Message = "Listen to this sound override on the Daily theme.", Theme = NotificationThemes.Daily, Overrides = new() { Sound = new(NotificationSounds.DoubleAlert), Lifetime = new(new ExpiringLifetime(TimeSpan.FromSeconds(8))) } }, cancellationToken: token);
 Print(receipt);
 if (receipt.Accepted) Print(await NotificationClient.WaitAsync(receipt, cancellationToken: token));

@@ -10,7 +10,7 @@ return await CommandLine.ExecuteAsync(args);
 internal static class CommandLine
 {
     /// <summary>Identifies an argument's field or command behavior at the text boundary.</summary>
-    enum Field { Title, Message, Source, Level, Kind, Priority, Theme, Sticky, Silent, Duration, At, After, Every, Recurrence, Id, Tag, Group, Progress, Image, Template, Input, Items, Actions, Sound, Json, Stdin, Wait, Help, Panel, List, Get, Clear, Update, Dismiss, Snooze, Settings, Exit }
+    enum Field { Title, Message, Source, Level, Kind, Priority, Theme, Sticky, Silent, Duration, ClickToAcknowledge, At, After, Every, Recurrence, Id, Tag, Group, Progress, Image, Template, Input, Items, Actions, Sound, Json, Stdin, Wait, Help, Panel, List, Get, Clear, Update, Dismiss, Snooze, Settings, Exit }
     /// <summary>Describes a public token and whether it consumes the next argument.</summary>
     /// <param name="Name">The accepted command or option spelling.</param>
     /// <param name="Field">The field or behavior selected by this token.</param>
@@ -20,7 +20,7 @@ internal static class CommandLine
     [
         new("--title", Field.Title, true), new("--message", Field.Message, true), new("--source", Field.Source, true),
         new("--level", Field.Level, true), new("--type", Field.Kind, true), new("--priority", Field.Priority, true), new("--theme", Field.Theme, true),
-        new("--sticky", Field.Sticky), new("--silent", Field.Silent), new("--duration", Field.Duration, true), new("--at", Field.At, true),
+        new("--sticky", Field.Sticky), new("--silent", Field.Silent), new("--duration", Field.Duration, true), new("--acknowledge-on-click", Field.ClickToAcknowledge), new("--at", Field.At, true),
         new("--after", Field.After, true), new("--every", Field.Every, true), new("--repeat", Field.Recurrence, true), new("--id", Field.Id, true),
         new("--tag", Field.Tag, true), new("--group", Field.Group, true), new("--progress", Field.Progress, true), new("--image", Field.Image, true),
         new("--template", Field.Template, true), new("--input", Field.Input), new("--items", Field.Items, true), new("--actions", Field.Actions, true),
@@ -69,11 +69,12 @@ internal static class CommandLine
                         case Field.Source: request["source"] = value; break;
                         case Field.Level: request["level"] = EnumText<NotificationLevel>(value); break;
                         case Field.Kind: request["kind"] = EnumText<NotificationKind>(value); break;
-                        case Field.Priority: request["priority"] = EnumText<NotificationPriority>(value); break;
+                        case Field.Priority: Content("overrides")["priority"] = EnumText<NotificationPriority>(value); break;
                         case Field.Theme: request["theme"] = value; break;
-                        case Field.Sticky: request["sticky"] = true; break;
-                        case Field.Silent: request["silent"] = true; break;
-                        case Field.Duration: request["duration"] = ParseDuration(value).ToString(); break;
+                        case Field.Sticky: Content("overrides")["lifetime"] = new JsonObject { ["mode"] = "acknowledge" }; break;
+                        case Field.Silent: Content("overrides")["sound"] = null; break;
+                        case Field.Duration: Content("overrides")["lifetime"] = new JsonObject { ["mode"] = "expire", ["duration"] = ParseDuration(value).ToString() }; break;
+                        case Field.ClickToAcknowledge: Content("interaction")["clickToAcknowledge"] = true; Content("interaction")["showSnooze"] = true; break;
                         case Field.At: Content("schedule")["at"] = JsonValue.Create(DateTimeOffset.Parse(value, CultureInfo.CurrentCulture)); break;
                         case Field.After: delay = ParseDuration(value); Content("schedule")["after"] = delay.Value.ToString(); break;
                         case Field.Every:
@@ -87,14 +88,14 @@ internal static class CommandLine
                         case Field.Progress: Content("progress")["value"] = double.Parse(value, CultureInfo.InvariantCulture); break;
                         case Field.Image: request["image"] = value; break;
                         case Field.Template: request["template"] = value; break;
-                        case Field.Input: request["input"] = new JsonObject(); request["sticky"] = true; break;
+                        case Field.Input: request["input"] = new JsonObject(); Content("overrides")["lifetime"] = new JsonObject { ["mode"] = "acknowledge" }; break;
                         case Field.Items:
                             request["checklist"] = new JsonArray(value.Split('|', StringSplitOptions.RemoveEmptyEntries).Select(text => (JsonNode)new JsonObject { ["id"] = text, ["text"] = text }).ToArray());
                             break;
                         case Field.Actions:
                             request["actions"] = new JsonArray(value.Split('|', StringSplitOptions.RemoveEmptyEntries).Select(label => (JsonNode)new JsonObject { ["id"] = label, ["label"] = label, ["kind"] = "dismiss" }).ToArray());
                             break;
-                        case Field.Sound: request["sound"] = new JsonObject { ["audioFile"] = Path.GetFullPath(value) }; break;
+                        case Field.Sound: Content("overrides")["sound"] = new JsonObject { ["audioFile"] = Path.GetFullPath(value) }; break;
                         case Field.Json: request = ReadObject(await File.ReadAllTextAsync(value, cancellation.Token)); break;
                         case Field.Stdin: request = ReadObject(await Console.In.ReadToEndAsync(cancellation.Token)); break;
                         case Field.Wait: wait = true; break;

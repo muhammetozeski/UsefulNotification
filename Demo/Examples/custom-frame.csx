@@ -1,14 +1,19 @@
-var theme = NotificationThemes.Dark with
+var theme = new NotificationTheme
 {
-    Frame = NotificationThemes.Dark.Frame with
+    Id = "demo-build", Name = "Build review", Parent = NotificationThemes.Attention,
+    Overrides = new()
     {
-        Pattern = BorderPattern.Dashed,
-        AccentEdges = BorderEdges.Top | BorderEdges.Left,
-        AccentColor = Color.SteelBlue,
-        CornerRadius = 8,
-        Thickness = new() { Top = 3, Right = 1, Bottom = 1, Left = 5 }
+        Frame = new()
+        {
+            Pattern = new(BorderPattern.Dashed),
+            AccentEdges = new(BorderEdges.All),
+            AccentColor = new(Color.SteelBlue),
+            CornerRadius = new(8)
+        },
+        Sound = new(null)
     }
 };
-var receipt = await NotificationClient.SendAsync(new() { Title = "Custom frame", Message = "Dashed top and left accents.", Theme = theme, Lifetime = NotificationLifetimes.UntilAcknowledged, Silent = true }, cancellationToken: token);
+Print(ThemeResolver.ResolveTheme(theme));
+var receipt = await NotificationClient.SendAsync(new() { Title = "Inherited custom theme", Message = "Attention supplies delivery and typography; this theme changes only its frame and sound.", Theme = theme }, cancellationToken: token);
 Print(receipt);
 if (receipt.Accepted) Print(await NotificationClient.WaitAsync(receipt, cancellationToken: token));

@@ -1,3 +1,3 @@
-var receipt = await NotificationClient.SendAsync(new() { Title = "HighUrgency sound", Message = "Listen to the selected preset.", Sound = NotificationSounds.HighUrgency, Silent = false, Lifetime = new ExpiringLifetime(TimeSpan.FromSeconds(3)) }, cancellationToken: token);
+var receipt = await NotificationClient.SendAsync(new() { Title = "Attention sound", Message = "Listen for exactly three long flat beeps at the same pitch.", Theme = NotificationThemes.Daily, Overrides = new() { Sound = new(NotificationSounds.Attention), Lifetime = new(new ExpiringLifetime(TimeSpan.FromSeconds(8))) } }, cancellationToken: token);
 Print(receipt);
 if (receipt.Accepted) Print(await NotificationClient.WaitAsync(receipt, cancellationToken: token));

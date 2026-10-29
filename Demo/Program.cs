@@ -6,12 +6,13 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using UsefulNotification;
 
 [assembly: AssemblyTitle("UsefulNotification Demo")]
-[assembly: AssemblyVersion("1.0.0.0")]
+[assembly: AssemblyVersion("3.0.0.0")]
 
 /// <summary>Starts an external consumer of the public SDK; the broker source and state models are not modified.</summary>
 internal static class DemoProgram
@@ -278,10 +279,15 @@ internal sealed class DemoWindow : Form
 /// <summary>Combines actual public presets and sends their text-boundary representation to notify.exe without compiling an example.</summary>
 internal sealed class NotificationPicker : Form
 {
-    /// <summary>Retains the selected value directly on its radio button.</summary>
+    static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
+    {
+        WriteIndented = true, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) }
+    };
+    /// <summary>Retains the selected object on its radio control.</summary>
     sealed record Choice<T>(string Label, T Value);
-    /// <summary>Combines an optional sound definition with explicit sound suppression.</summary>
-    sealed record SoundChoice(SoundPattern? Pattern = null, bool Silent = false);
+    /// <summary>Distinguishes inherited sound from an explicit silent override.</summary>
+    sealed record SoundChoice(SoundPattern? Pattern = null, bool Inherit = true);
     readonly bool English;
     readonly string CommandPath;
     readonly string Source;
@@ -289,28 +295,35 @@ internal sealed class NotificationPicker : Form
     readonly TextBox MessageInput = new() { Dock = DockStyle.Fill };
     readonly TextBox Preview = new() { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical };
     readonly TextBox Result = new() { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical };
+    readonly Label Effective = new() { Dock = DockStyle.Fill, AutoSize = true, Padding = new(8) };
+    readonly Panel Card = new() { Dock = DockStyle.Fill, Padding = new(16), MinimumSize = new(380, 96), Margin = new(8) };
+    readonly Label CardTitle = new() { Dock = DockStyle.Top, AutoSize = true };
+    readonly Label CardMessage = new() { Dock = DockStyle.Fill };
     readonly Button Send = new() { AutoSize = true };
-    readonly Func<NotificationTheme?> Theme;
-    readonly Func<NotificationLevel?> Level;
-    readonly Func<NotificationPriority> Priority;
+    readonly Func<NotificationTheme> Theme;
+    readonly Func<NotificationPriority?> Priority;
     readonly Func<SoundChoice> Sound;
     readonly Func<NotificationLifetime?> Lifetime;
+    readonly Func<NotificationInteraction?> Interaction;
+    readonly Func<Color?> Accent;
+    Color CardAccent;
     bool Sending;
 
-    /// <summary>Builds independent radio groups; opening this window never sends or compiles anything.</summary>
-    /// <param name="options">Existing demo dimensions and appearance.</param>
-    /// <param name="host">Selected portable launcher; notify.exe is resolved beside it.</param>
-    /// <param name="english">Whether captions should use English.</param>
+    /// <summary>Selects a whole theme and applies only explicitly chosen per-send overrides.</summary>
+    /// <param name="options">Demo dimensions, fonts and paths.</param>
+    /// <param name="host">Portable launcher whose adjacent notify.exe sends the displayed request.</param>
+    /// <param name="english">Whether captions use English.</param>
     public NotificationPicker(DemoOptions options, string host, bool english)
     {
         English = english; Text = T("Bildirim oluştur", "Compose notification"); Font = options.TextFont;
-        Size = new(980, 850); MinimumSize = new(820, 650); StartPosition = FormStartPosition.CenterParent;
+        Size = new(980, 950); MinimumSize = new(820, 750); StartPosition = FormStartPosition.CenterParent;
         CommandPath = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(host))!, "notify.exe");
         Source = Path.GetFileNameWithoutExtension(options.ExampleAssembly);
-        var root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = options.Padding, RowCount = 4 };
+        var root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = options.Padding, RowCount = 6 };
         root.ColumnStyles.Add(new(SizeType.Percent, 100));
-        root.RowStyles.Add(new(SizeType.Percent, 65)); root.RowStyles.Add(new(SizeType.AutoSize));
-        root.RowStyles.Add(new(SizeType.Percent, 20)); root.RowStyles.Add(new(SizeType.Percent, 15));
+        root.RowStyles.Add(new(SizeType.Percent, 55)); root.RowStyles.Add(new(SizeType.Absolute, 112));
+        root.RowStyles.Add(new(SizeType.AutoSize)); root.RowStyles.Add(new(SizeType.AutoSize));
+        root.RowStyles.Add(new(SizeType.Percent, 25)); root.RowStyles.Add(new(SizeType.Percent, 20));
         var scroll = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
         var choices = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 1 };
         choices.ColumnStyles.Add(new(SizeType.Percent, 100)); scroll.Controls.Add(choices);
@@ -319,13 +332,41 @@ internal sealed class NotificationPicker : Form
         content.Controls.Add(new Label { Text = T("Başlık", "Title"), AutoSize = true }, 0, 0); content.Controls.Add(TitleInput, 1, 0);
         content.Controls.Add(new Label { Text = T("Mesaj", "Message"), AutoSize = true }, 0, 1); content.Controls.Add(MessageInput, 1, 1);
         TitleInput.Text = T("Deneme", "Preview"); MessageInput.Text = T("Bildirim içeriği", "Notification content"); choices.Controls.Add(content);
-        Theme = Group(choices, T("Tema · görünüm", "Theme · appearance"), new[] { new Choice<NotificationTheme?>(T("Panelde seçili", "Panel selection"), null) }.Concat(NotificationThemes.All.Select(theme => new Choice<NotificationTheme?>(theme.Name, theme))));
-        Level = Group(choices, T("Seviye · vurgulu kenarlık rengi", "Level · accent border color"), new[] { new Choice<NotificationLevel?>(T("Temanın varsayılanı", "Theme default"), null) }.Concat(Enum.GetValues<NotificationLevel>().Select(level => new Choice<NotificationLevel?>(level.ToString(), level))));
-        Priority = Group(choices, T("Öncelik · kuyruk sırası", "Priority · queue order"), new[] { NotificationPriority.Normal, NotificationPriority.Low, NotificationPriority.High, NotificationPriority.Urgent }.Select(priority => new Choice<NotificationPriority>(priority.ToString(), priority)));
-        Sound = Group(choices, T("Ses", "Sound"), new[] { new Choice<SoundChoice>(T("Panelde seçili", "Panel selection"), new()), new Choice<SoundChoice>(T("Sessiz", "Silent"), new(Silent: true)) }.Concat(NotificationSounds.All.Select(sound => new Choice<SoundChoice>(sound.Name, new(sound)))));
-        Lifetime = Group(choices, T("Gösterim süresi", "Display lifetime"), new[] { new Choice<NotificationLifetime?>(T("Varsayılan", "Default"), null), new Choice<NotificationLifetime?>(T("8 saniye", "8 seconds"), NotificationLifetimes.Default), new Choice<NotificationLifetime?>(T("Kapatana kadar", "Until dismissed"), NotificationLifetimes.UntilAcknowledged) });
+        var workshop = new NotificationTheme
+        {
+            Id = "demo-workshop", Name = "Workshop", Parent = NotificationThemes.Success,
+            Overrides = new() { Palette = new() { Accent = new(Color.CornflowerBlue) } }
+        };
+        Theme = Group(choices, T("Tema · renk, ses ve gösterim birlikte", "Theme · colors, sound and delivery together"),
+            new[] { NotificationThemes.Daily }.Concat(NotificationThemes.All.Where(theme => !ReferenceEquals(theme, NotificationThemes.Daily))).Select(theme => new Choice<NotificationTheme>(theme.Name, theme))
+            .Append(new(T("Workshop · Success temasından", "Workshop · inherits Success"), workshop)));
+        Accent = Group(choices, T("Vurgu rengi · isteğe bağlı değişiklik", "Accent color · optional override"), new[]
+        {
+            new Choice<Color?>(T("Temadan al", "Inherit theme"), null), new Choice<Color?>(T("Mavi", "Blue"), Color.CornflowerBlue),
+            new Choice<Color?>(T("Yeşil", "Green"), Color.MediumSeaGreen), new Choice<Color?>(T("Turuncu", "Orange"), Color.DarkOrange)
+        });
+        Sound = Group(choices, T("Ses · isteğe bağlı değişiklik", "Sound · optional override"), new[]
+        {
+            new Choice<SoundChoice>(T("Temadan al", "Inherit theme"), new()), new Choice<SoundChoice>(T("Sessiz", "Silent"), new(null, false))
+        }.Concat(NotificationSounds.All.Select(sound => new Choice<SoundChoice>(sound.Name, new(sound, false)))));
+        Priority = Group(choices, T("Kuyruk önceliği · isteğe bağlı değişiklik", "Queue priority · optional override"),
+            new[] { new Choice<NotificationPriority?>(T("Temadan al", "Inherit theme"), null) }.Concat(Enum.GetValues<NotificationPriority>().Select(priority => new Choice<NotificationPriority?>(priority.ToString(), priority))));
+        Lifetime = Group(choices, T("Gösterim süresi · isteğe bağlı değişiklik", "Lifetime · optional override"), new[]
+        {
+            new Choice<NotificationLifetime?>(T("Temadan al", "Inherit theme"), null), new Choice<NotificationLifetime?>(T("8 saniye", "8 seconds"), NotificationLifetimes.Default),
+            new Choice<NotificationLifetime?>(T("Onaylayana kadar", "Until acknowledged"), NotificationLifetimes.UntilAcknowledged)
+        });
+        Interaction = Group(choices, T("Onaylama · erteleme korunur", "Acknowledgement · snooze stays available"), new[]
+        {
+            new Choice<NotificationInteraction?>(T("Temadan al", "Inherit theme"), null),
+            new Choice<NotificationInteraction?>(T("Kartın boş alanına tıkla", "Click the card background"), NotificationInteractions.ClickToAcknowledge),
+            new Choice<NotificationInteraction?>(T("Kapat düğmesi", "Dismiss button"), NotificationInteractions.Actions)
+        });
+        CardTitle.Font = new Font(options.TextFont, FontStyle.Bold); Card.Controls.Add(CardMessage); Card.Controls.Add(CardTitle);
+        Card.Paint += (_, args) => { using var pen = new Pen(CardAccent, 2); args.Graphics.DrawRectangle(pen, 1, 1, Math.Max(0, Card.Width - 3), Math.Max(0, Card.Height - 3)); };
         Send.Text = T("Bildirim yolla", "Send notification"); Send.BackColor = options.Accent; Send.ForeColor = Color.White;
-        root.Controls.Add(scroll, 0, 0); root.Controls.Add(Send, 0, 1); root.Controls.Add(Preview, 0, 2); root.Controls.Add(Result, 0, 3); Controls.Add(root);
+        root.Controls.Add(scroll, 0, 0); root.Controls.Add(Card, 0, 1); root.Controls.Add(Effective, 0, 2);
+        root.Controls.Add(Send, 0, 3); root.Controls.Add(Preview, 0, 4); root.Controls.Add(Result, 0, 5); Controls.Add(root);
         Send.Click += async (_, _) => await SendAsync();
         TitleInput.TextChanged += (_, _) => RefreshPreview(); MessageInput.TextChanged += (_, _) => RefreshPreview();
         foreach (var radio in choices.Controls.OfType<GroupBox>().SelectMany(group => group.Controls.OfType<FlowLayoutPanel>()).SelectMany(flow => flow.Controls.OfType<RadioButton>())) radio.CheckedChanged += (_, _) => RefreshPreview();
@@ -333,15 +374,15 @@ internal sealed class NotificationPicker : Form
         RefreshPreview();
     }
 
-    /// <summary>Chooses the requested interface language.</summary>
+    /// <summary>Returns the selected language's caption.</summary>
     string T(string turkish, string english) => English ? english : turkish;
 
-    /// <summary>Creates one mutually exclusive group and returns its actual selected object.</summary>
-    /// <typeparam name="T">The preset or finite setting retained by the controls.</typeparam>
+    /// <summary>Creates mutually exclusive controls that retain their actual selected values.</summary>
+    /// <typeparam name="T">The preset object or finite value retained by each control.</typeparam>
     /// <param name="parent">Scrollable settings layout.</param>
-    /// <param name="caption">Visible group heading.</param>
-    /// <param name="choices">Labeled values; the first value is initially selected.</param>
-    /// <returns>A reader of the selected value without name-to-object lookup.</returns>
+    /// <param name="caption">Visible heading.</param>
+    /// <param name="choices">Labeled values; the first is initially selected.</param>
+    /// <returns>A reader of the selected value.</returns>
     static Func<T> Group<T>(TableLayoutPanel parent, string caption, IEnumerable<Choice<T>> choices)
     {
         var group = new GroupBox { Text = caption, Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(8, 22, 8, 8), Margin = new Padding(0, 6, 0, 6) };
@@ -351,25 +392,72 @@ internal sealed class NotificationPicker : Form
         return () => ((Choice<T>)flow.Controls.OfType<RadioButton>().Single(radio => radio.Checked).Tag!).Value;
     }
 
-    /// <summary>Projects only supported text-boundary fields, preserving omission for panel defaults.</summary>
-    /// <returns>The JSON body supplied verbatim to notify.exe standard input.</returns>
-    string Request()
+    /// <summary>Builds the public request with absent override fields retaining theme inheritance.</summary>
+    /// <returns>The request whose serialized body is sent unchanged to notify.exe.</returns>
+    NotificationRequest Request()
     {
-        var request = new Dictionary<string, object?> { ["title"] = TitleInput.Text, ["message"] = MessageInput.Text, ["source"] = Source, ["priority"] = Priority().ToString() };
-        if (Theme() is { } theme) request["theme"] = theme.Name;
-        if (Level() is { } level) request["level"] = level.ToString();
+        var request = new NotificationRequest { Title = TitleInput.Text, Message = MessageInput.Text, Source = Source, Theme = Theme(), Overrides = new() };
+        if (Accent() is { } accent) request.Overrides.Palette = new() { Accent = new(accent) };
         var sound = Sound();
-        if (sound.Silent) request["silent"] = true;
-        if (sound.Pattern is { } pattern) request["sound"] = new { steps = pattern.Steps.Select(step => new { frequency = step.Frequency, duration = step.Duration.ToString(), pause = step.Pause.ToString() }) };
-        if (Lifetime() is AcknowledgedLifetime) request["lifetime"] = new { mode = "acknowledge" };
-        else if (Lifetime() is ExpiringLifetime expiry) request["lifetime"] = new { mode = "expire", duration = expiry.Duration.ToString() };
-        return JsonSerializer.Serialize(request, new JsonSerializerOptions { WriteIndented = true });
+        if (!sound.Inherit) request.Overrides.Sound = new(sound.Pattern);
+        if (Priority() is { } priority) request.Overrides.Priority = new(priority);
+        if (Lifetime() is { } lifetime) request.Overrides.Lifetime = new(lifetime);
+        if (Interaction() is { } interaction) request.Interaction = interaction;
+        return request;
     }
 
-    /// <summary>Displays the exact executable and body that will be sent.</summary>
-    void RefreshPreview() => Preview.Text = "\"" + CommandPath + "\" --stdin" + Environment.NewLine + Request();
+    /// <summary>Uses the production resolver for effective colors, sound and delivery; serialization preserves explicit silence.</summary>
+    void RefreshPreview()
+    {
+        NotificationRequest request = Request();
+        ResolvedNotification resolved = ThemeResolver.Resolve(request);
+        ThemePalette palette = resolved.Theme.Palette;
+        Card.BackColor = palette.DarkBackground ?? palette.Background; Card.ForeColor = palette.Text; CardAccent = resolved.Theme.Frame.AccentColor ?? palette.DarkAccent ?? palette.Accent;
+        CardTitle.Text = request.Title; CardTitle.ForeColor = palette.Text; CardMessage.Text = request.Message; CardMessage.ForeColor = palette.Text; Card.Invalidate();
+        string sound = resolved.Sound?.Name ?? T("Sessiz", "Silent");
+        string lifetime = resolved.Lifetime is ExpiringLifetime expiry ? expiry.Duration.ToString() : T("Onaylayana kadar", "Until acknowledged");
+        string interaction = resolved.Interaction.ClickToAcknowledge ? T("Karta tıklayarak onayla", "Click card to acknowledge") : T("Düğmeyle onayla", "Acknowledge with button");
+        Effective.Text = $"{resolved.Theme.Name} · {T("Ses", "Sound")}: {sound} ({resolved.FieldOrigins.GetValueOrDefault(nameof(ResolvedNotification.Sound), resolved.Theme.Name)})" +
+            $" · {T("Süre", "Lifetime")}: {lifetime} ({resolved.FieldOrigins.GetValueOrDefault(nameof(ResolvedNotification.Lifetime), resolved.Theme.Name)})" + Environment.NewLine +
+            $"{T("Öncelik", "Priority")}: {resolved.Priority} · {interaction}" +
+            (resolved.Interaction.ShowSnooze ? T(" · Erteleme açık", " · Snooze available") : string.Empty);
+        Preview.Text = "\"" + CommandPath + "\" --stdin" + Environment.NewLine + WireRequest(request);
+    }
 
-    /// <summary>Sends directly to the existing command executable, awaits its actual response and never invokes a compiler.</summary>
+    /// <summary>Projects the composer's supported values to JSON at the command text boundary.</summary>
+    /// <param name="request">The same actual-object request used for the effective preview.</param>
+    /// <returns>JSON with inherited fields omitted and an explicit null sound retained.</returns>
+    static string WireRequest(NotificationRequest request)
+    {
+        NotificationTheme theme = request.Theme ?? NotificationThemes.Daily;
+        object selectedTheme = theme.Name;
+        if (theme.Parent is { } parent)
+        {
+            if (!NotificationThemes.All.Any(preset => ReferenceEquals(preset, theme)))
+            {
+                var themeOverrides = new Dictionary<string, object?>();
+                if (theme.Overrides.Palette?.Accent is { } themeAccent) themeOverrides["palette"] = new { accent = ColorText(themeAccent.Value) };
+                selectedTheme = new { theme.Id, theme.Name, parent = parent.Id, overrides = themeOverrides };
+            }
+        }
+        var body = new Dictionary<string, object?> { ["title"] = request.Title, ["message"] = request.Message, ["source"] = request.Source, ["theme"] = selectedTheme };
+        var overrides = new Dictionary<string, object?>();
+        if (request.Overrides?.Palette?.Accent is { } accent) overrides["palette"] = new { accent = ColorText(accent.Value) };
+        if (request.Overrides?.Sound is { } sound) overrides["sound"] = sound.Value;
+        if (request.Overrides?.Priority is { } priority) overrides["priority"] = priority.Value;
+        if (request.Overrides?.Lifetime is { } lifetime)
+            overrides["lifetime"] = lifetime.Value is ExpiringLifetime expiry ? new { mode = "expire", duration = expiry.Duration.ToString() } : new { mode = "acknowledge" };
+        if (overrides.Count > 0) body["overrides"] = overrides;
+        if (request.Interaction is { } interaction) body["interaction"] = interaction;
+        return JsonSerializer.Serialize(body, Json);
+    }
+
+    /// <summary>Writes a selected native color using the host's HTML RGBA representation.</summary>
+    /// <param name="color">Color selected by a demo override.</param>
+    /// <returns>A hexadecimal color with alpha in the final pair.</returns>
+    static string ColorText(Color color) => $"#{color.R:X2}{color.G:X2}{color.B:X2}{color.A:X2}";
+
+    /// <summary>Sends the exact JSON through the installed command executable without invoking a compiler.</summary>
     async Task SendAsync()
     {
         if (Sending) return;
@@ -377,7 +465,8 @@ internal sealed class NotificationPicker : Form
         try
         {
             if (!File.Exists(CommandPath)) throw new FileNotFoundException("notify.exe was not found beside the selected host.", CommandPath);
-            string request = Request(); Preview.Text = "\"" + CommandPath + "\" --stdin" + Environment.NewLine + request;
+            string request = WireRequest(Request());
+            Preview.Text = "\"" + CommandPath + "\" --stdin" + Environment.NewLine + request;
             var start = new ProcessStartInfo(CommandPath) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true };
             start.ArgumentList.Add("--stdin");
             using var process = Process.Start(start) ?? throw new IOException("The notification sender did not start.");

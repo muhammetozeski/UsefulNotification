@@ -1,9 +1,10 @@
 var receipt = await NotificationClient.SendAsync(new()
 {
     Title = "Review required",
-    Message = "Dismiss this card when you have read it.",
-    Lifetime = NotificationLifetimes.UntilAcknowledged,
-    Silent = true
+    Message = "Click the card background to acknowledge, or use Snooze to postpone.",
+    Theme = NotificationThemes.Reminder,
+    Interaction = NotificationInteractions.ClickToAcknowledge,
+    Overrides = new() { Sound = new(null) }
 }, cancellationToken: token);
 Print(receipt);
 if (receipt.Accepted) Print(await NotificationClient.WaitAsync(receipt, cancellationToken: token));
