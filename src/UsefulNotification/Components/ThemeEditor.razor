@@ -1,0 +1,150 @@
+@implements IDisposable
+<div class="themes-layout">
+    <aside class="theme-tree" aria-label="@Strings.ThemeHierarchy">
+        @foreach (var node in OrderedThemes())
+        {
+            <button aria-current="@(node.Theme.Id == Selected.Id ? "true" : "false")" style="padding-left:@(12 + node.Depth * 16)px" @onclick="() => Select(node.Theme)">@ThemeStyle.Label(node.Theme.Name)</button>
+        }
+        <button @onclick="StartCreate">+ @Strings.CreateChildTheme</button>
+        <button class="quiet" @onclick="OpenSounds">@Strings.EditSounds</button>
+    </aside>
+    <div class="theme-workspace">
+        @if (Error is not null) { <p class="error" role="alert">@Error</p> }
+        @if (EditingSound)
+        {
+            <h2>@Strings.EditThemeSound</h2>
+            <SoundEditor ThemeSound="ThemeSoundDraft" Saved="SaveSound" Canceled="CancelSound" DirtyChanged="SoundChanged" />
+        }
+        else
+        {
+        @if (Status is not null) { <p class="status" role="status">@Status</p> }
+        @if (Creating)
+        {
+            <fieldset class="form-section"><legend>@Strings.CreateChildTheme</legend><label class="field">@Strings.Name<input @bind="NewName" /></label><p class="muted">@string.Format(Strings.NewThemeParent, ThemeStyle.Label(Selected.Name))</p><div class="actions"><button class="primary" @onclick="Create">@Strings.Create</button><button @onclick="() => Creating = false">@Strings.Cancel</button></div></fieldset>
+        }
+        <div class="editor-header"><h2>@ThemeStyle.Label(Selected.Name)</h2><div class="row"><button @onclick="Preview">@Strings.Preview</button><button disabled="@(Resolved.Sound is null || Playing)" @onclick="Play">@Strings.TestSound</button></div></div>
+        <div class="theme-preview">
+            <style>@((MarkupString)ThemeStyle.Render(Resolved.Theme, "[data-theme-preview]"))</style>
+            <article class="card @(Resolved.Interaction.ClickToAcknowledge ? "has-acknowledge" : null)" data-theme-preview>
+                <header class="card-header"><span class="sender-icon">U</span><div class="meta"><span class="sender">@AppConstants.Product.Name</span><time>@DateTime.Now.ToString(AppConstants.Notifications.TimeFormat)</time></div></header>
+                <div class="card-content"><h2>@Strings.ThemePreviewTitle</h2><p>@Strings.ThemePreviewMessage</p><div class="card-footer"><div class="card-actions"><span class="snooze"><button disabled>@Strings.Snooze</button><button disabled aria-label="@Strings.SnoozeOptions">▾</button></span><button disabled class="primary domain-action">@Strings.Open</button></div></div></div>
+            </article>
+        </div>
+        <div class="form-grid">
+            <label class="field">@Strings.Name<input @bind="Draft.Name" @bind:after="MarkDirty" /></label>
+            <label class="field">@Strings.ParentTheme<select value="@Draft.Parent?.Id" @onchange="ChangeParent"><option value="">@Strings.NoParentTheme</option>@foreach (var parent in ThemeCatalog.Themes.Where(CanParent)) { <option value="@parent.Id">@ThemeStyle.Label(parent.Name)</option> }</select></label>
+        </div>
+        <fieldset class="form-section"><legend>@Strings.AppearanceOptions</legend><ThemeFields Overrides="Draft.Overrides.Palette!" Effective="Resolved.Theme.Palette" Path="Palette" Origins="Resolved.FieldOrigins" Fields="ColorFields" Changed="MarkDirty" /><div style="margin-top:14px"><ThemeFields Overrides="Draft.Overrides.Typography!" Effective="Resolved.Theme.Typography" Path="Typography" Origins="Resolved.FieldOrigins" Fields="TextFields" Changed="MarkDirty" /></div></fieldset>
+        <fieldset class="form-section"><legend>@Strings.Sound</legend><label class="field">@Strings.SoundPreset<select value="@SoundSelection" @onchange="ChangeSound"><option value="inherit">@Strings.InheritFromTheme</option><option value="silent">@Strings.Silent</option>@foreach (var sound in Sounds) { <option value="@sound.Id">@ThemeStyle.Label(sound.Name)</option> }</select></label><div class="field-origin"><span>@Origin("Sound", Draft.Overrides.Sound is not null)</span>@if (Draft.Overrides.Sound is not null) { <button @onclick="ResetSound">@Strings.ReturnToInherited</button> }</div><div class="actions"><button disabled="@(Resolved.Sound is null)" @onclick="OpenThemeSound">@Strings.EditThemeSound</button></div></fieldset>
+        <fieldset class="form-section"><legend>@Strings.DeliveryBehavior</legend><div class="form-grid">
+            <div class="theme-field"><label class="field">@Strings.Closing<select value="@LifetimeSelection" @onchange="ChangeLifetime"><option value="inherit">@Strings.InheritFromTheme</option><option value="expire">@Strings.AfterDuration</option><option value="acknowledged">@Strings.Sticky</option></select></label>@if (Resolved.Lifetime is ExpiringLifetime expires) { <label class="field">@Strings.Duration<input type="number" min="0.1" step="any" value="@expires.Duration.TotalSeconds" @onchange="ChangeSeconds" /></label> }<div class="field-origin">@Origin("Lifetime", Draft.Overrides.Lifetime is not null)@if (Draft.Overrides.Lifetime is not null) { <button @onclick="ResetLifetime">@Strings.ReturnToInherited</button> }</div></div>
+            <div class="theme-field"><label class="field">@Strings.Priority<select value="@PrioritySelection" @onchange="ChangePriority"><option value="inherit">@Strings.InheritFromTheme</option>@foreach (var priority in Enum.GetValues<NotificationPriority>()) { <option value="@priority">@ThemeStyle.Label(priority)</option> }</select></label><div class="field-origin">@Origin("Priority", Draft.Overrides.Priority is not null)@if (Draft.Overrides.Priority is not null) { <button @onclick="ResetPriority">@Strings.ReturnToInherited</button> }</div></div>
+            <div class="theme-field"><label class="field">@Strings.InteractionMode<select value="@InteractionSelection" @onchange="ChangeInteraction"><option value="inherit">@Strings.InheritFromTheme</option><option value="actions">@Strings.ActionButtons</option><option value="acknowledge">@Strings.ClickToAcknowledge</option></select></label><div class="field-origin">@Origin("Interaction", Draft.Overrides.Interaction is not null)@if (Draft.Overrides.Interaction is not null) { <button @onclick="ResetInteraction">@Strings.ReturnToInherited</button> }</div></div>
+        </div></fieldset>
+        <details class="form-section"><summary>@Strings.AdvancedAppearance</summary>
+            <h3>@Strings.Palette</h3><ThemeFields Overrides="Draft.Overrides.Palette!" Effective="Resolved.Theme.Palette" Path="Palette" Origins="Resolved.FieldOrigins" Fields="AdvancedColors" Changed="MarkDirty" />
+            <h3>@Strings.Typography</h3><ThemeFields Overrides="Draft.Overrides.Typography!" Effective="Resolved.Theme.Typography" Path="Typography" Origins="Resolved.FieldOrigins" Fields="AdvancedText" Changed="MarkDirty" />
+            <h3>@Strings.Layout</h3><ThemeFields Overrides="Draft.Overrides.Layout!" Effective="Resolved.Theme.Layout" Path="Layout" Origins="Resolved.FieldOrigins" Changed="MarkDirty" />
+            <h3>@Strings.Frame</h3><ThemeFields Overrides="Draft.Overrides.Frame!" Effective="Resolved.Theme.Frame" Path="Frame" Origins="Resolved.FieldOrigins" Changed="MarkDirty" />
+            <ThemeFields Overrides="Draft.Overrides.Frame!.Thickness!" Effective="Resolved.Theme.Frame.Thickness" Path="Frame.Thickness" Origins="Resolved.FieldOrigins" Changed="MarkDirty" />
+        </details>
+        <div class="actions"><button class="primary" disabled="@(!Dirty)" @onclick="Save">@Strings.SaveTheme</button><button disabled="@(!Dirty)" @onclick="Discard">@Strings.ResetChanges</button></div>
+        }
+    </div>
+</div>
+@if (ConfirmSoundDiscard)
+{
+    <div class="dialog-backdrop" @onkeydown="SoundDialogKey" @onkeydown:stopPropagation><section class="dialog" role="alertdialog" aria-modal="true" aria-labelledby="sound-discard-title"><h2 id="sound-discard-title">@Strings.UnsavedChanges</h2><p>@Strings.DiscardChangesQuestion</p><div class="actions"><button autofocus @onclick="() => ConfirmSoundDiscard = false">@Strings.Cancel</button><button class="danger" @onclick="DiscardSound">@Strings.DiscardChanges</button></div></section></div>
+}
+@code {
+    [Parameter] public EventCallback<bool> DirtyChanged { get; set; }
+    [Parameter] public EventCallback EditSounds { get; set; }
+    NotificationTheme Selected = null!, Draft = null!;
+    ResolvedNotification Resolved = null!;
+    bool Dirty, Creating, Playing, EditingSound, SoundDirty, ConfirmSoundDiscard;
+    SoundPattern? ThemeSoundDraft;
+    string NewName = string.Empty;
+    string? Error, Status;
+    CancellationTokenSource? PreviewCancellation;
+    static readonly string[] ColorFields = ["LightBackground", "DarkBackground", "LightAccent", "DarkAccent"];
+    static readonly string[] TextFields = ["CardTitle", "Body"];
+    static readonly string[] AdvancedColors = ["Background", "Surface", "Border", "Text", "Muted", "Accent", "AccentText", "Overlay"];
+    static readonly string[] AdvancedText = ["Family", "Small", "Heading", "NormalWeight", "StrongWeight", "LineHeight", "HeadingLineHeight"];
+    IEnumerable<SoundPattern> Sounds => App.Hub.Preferences.Sounds.Concat(Resolved.Sound is { } sound ? new[] { sound } : []).DistinctBy(sound => sound.Id);
+    string SoundSelection => Draft.Overrides.Sound is null ? "inherit" : Draft.Overrides.Sound.Value?.Id.ToString() ?? "silent";
+    string LifetimeSelection => Draft.Overrides.Lifetime is null ? "inherit" : Resolved.Lifetime is AcknowledgedLifetime ? "acknowledged" : "expire";
+    string PrioritySelection => Draft.Overrides.Priority is null ? "inherit" : Resolved.Priority.ToString();
+    string InteractionSelection => Draft.Overrides.Interaction is null ? "inherit" : Resolved.Interaction.ClickToAcknowledge ? "acknowledge" : "actions";
+    /// <summary>Starts with a detached Daily draft while preserving actual catalog parents.</summary>
+    protected override void OnInitialized() { Selected = ThemeCatalog.Get(nameof(NotificationThemes.Daily)); Load(); }
+    /// <summary>Copies only the selected saved definition and prepares all optional editor sections.</summary>
+    void Load()
+    {
+        Draft = ThemeResolver.CreateDraft(Selected); Draft.Overrides ??= new(); Draft.Overrides.Palette ??= new(); Draft.Overrides.Typography ??= new(); Draft.Overrides.Layout ??= new(); Draft.Overrides.Frame ??= new(); Draft.Overrides.Frame.Thickness ??= new();
+        Resolved = ThemeResolver.ResolveTheme(Draft); Dirty = false; Error = null; Status = null;
+    }
+    /// <summary>Lists actual parents before descendants without duplicating nodes or following cycles.</summary>
+    IEnumerable<(NotificationTheme Theme, int Depth)> OrderedThemes()
+    {
+        var all = ThemeCatalog.Themes; var visited = new HashSet<string>(); var result = new List<(NotificationTheme,int)>();
+        void Add(NotificationTheme theme, int depth) { if (!visited.Add(theme.Id)) return; result.Add((theme, depth)); foreach (var child in all.Where(item => item.Parent?.Id == theme.Id)) Add(child, depth + 1); }
+        foreach (var root in all.Where(theme => theme.Parent is null || !all.Any(parent => parent.Id == theme.Parent.Id))) Add(root, 0);
+        foreach (var remaining in all) Add(remaining, 0); return result;
+    }
+    /// <summary>Switches saved definitions only when no unfinished theme edits would be lost.</summary>
+    async Task Select(NotificationTheme theme) { if (Dirty || SoundDirty) { Error = Strings.SaveOrDiscardTheme; return; } Selected = theme; Creating = false; EditingSound = false; Load(); await DirtyChanged.InvokeAsync(false); }
+    /// <summary>Prevents choosing this definition or its descendants as a parent.</summary>
+    bool CanParent(NotificationTheme theme) { for (NotificationTheme? current = theme; current is not null; current = current.Parent) if (current.Id == Selected.Id) return false; return true; }
+    /// <summary>Rebinds the draft parent to an actual saved catalog definition.</summary>
+    async Task ChangeParent(ChangeEventArgs args) { Draft.Parent = ThemeCatalog.Themes.FirstOrDefault(theme => theme.Id == args.Value?.ToString()); await MarkDirty(); }
+    /// <summary>Opens creation under the selected saved parent after draft ownership is resolved.</summary>
+    void StartCreate() { if (Dirty || SoundDirty) { Error = Strings.SaveOrDiscardTheme; return; } EditingSound = false; Creating = true; NewName = string.Empty; }
+    /// <summary>Creates an actual empty-patch child whose values all come from its selected parent.</summary>
+    async Task Create() { var result = RunSafely(() => ThemeCatalog.Create(NewName, Selected)); if (!result.Succeeded) { Error = Strings.InvalidThemeName; return; } Selected = result.Value!; Creating = false; Load(); Status = Strings.ThemeCreated; await DirtyChanged.InvokeAsync(false); }
+    /// <summary>Publishes only a validated saved definition, then refreshes its independent editor copy.</summary>
+    async Task Save() { var result = RunSafely(() => ThemeCatalog.Save(Draft)); if (!result.Succeeded) { Error = Strings.InvalidThemeValue; return; } Selected = ThemeCatalog.Themes.First(theme => theme.Id == Draft.Id); Load(); Status = Strings.ThemeSaved; await DirtyChanged.InvokeAsync(false); }
+    /// <summary>Discards the complete theme draft and restores its saved inheritance.</summary>
+    async Task Discard() { Load(); await DirtyChanged.InvokeAsync(false); }
+    /// <summary>Recomputes the preview without mutating its parent or any saved descendant.</summary>
+    async Task MarkDirty() { var result = RunSafely(() => ThemeResolver.ResolveTheme(Draft)); if (result.Succeeded) { Resolved = result.Value!; Error = null; } else Error = Strings.InvalidThemeValue; Dirty = true; Status = null; await DirtyChanged.InvokeAsync(true); }
+    /// <summary>Formats the source for a top-level field's inherited or explicit value.</summary>
+    string Origin(string key, bool changed) => changed ? Strings.Customized : string.Format(Strings.InheritedFrom, ThemeStyle.Label(Resolved.FieldOrigins.GetValueOrDefault(key) ?? Strings.Base));
+    /// <summary>Stores only this theme's selected sound override.</summary>
+    async Task ChangeSound(ChangeEventArgs args) { string value = args.Value?.ToString() ?? "inherit"; Draft.Overrides.Sound = value == "inherit" ? null : new(value == "silent" ? null : NotificationProtocol.Copy(Sounds.First(sound => sound.Id.ToString() == value))); await MarkDirty(); }
+    /// <summary>Returns this theme's sound to its parent.</summary>
+    async Task ResetSound() { Draft.Overrides.Sound = null; await MarkDirty(); }
+    /// <summary>Stores the selected lifetime policy without changing other delivery fields.</summary>
+    async Task ChangeLifetime(ChangeEventArgs args) { string value = args.Value?.ToString() ?? "inherit"; Draft.Overrides.Lifetime = value == "inherit" ? null : new(value == "acknowledged" ? NotificationLifetimes.UntilAcknowledged : new ExpiringLifetime(TimeSpan.FromSeconds(8))); await MarkDirty(); }
+    /// <summary>Edits an explicit expiring lifetime and rejects nonpositive durations.</summary>
+    async Task ChangeSeconds(ChangeEventArgs args) { if (!double.TryParse(args.Value?.ToString(), System.Globalization.CultureInfo.InvariantCulture, out double value) || !double.IsFinite(value) || value <= 0) { Error = Strings.InvalidDuration; return; } Draft.Overrides.Lifetime = new(new ExpiringLifetime(TimeSpan.FromSeconds(value))); await MarkDirty(); }
+    /// <summary>Returns lifetime to the selected parent.</summary>
+    async Task ResetLifetime() { Draft.Overrides.Lifetime = null; await MarkDirty(); }
+    /// <summary>Changes only queue priority.</summary>
+    async Task ChangePriority(ChangeEventArgs args) { Draft.Overrides.Priority = Enum.TryParse<NotificationPriority>(args.Value?.ToString(), out var priority) ? new(priority) : null; await MarkDirty(); }
+    /// <summary>Returns queue priority to the parent.</summary>
+    async Task ResetPriority() { Draft.Overrides.Priority = null; await MarkDirty(); }
+    /// <summary>Stores the selected interaction object, including its independent snooze controls.</summary>
+    async Task ChangeInteraction(ChangeEventArgs args) { string value = args.Value?.ToString() ?? "inherit"; Draft.Overrides.Interaction = value == "inherit" ? null : new(NotificationProtocol.Copy(value == "acknowledge" ? NotificationInteractions.ClickToAcknowledge : NotificationInteractions.Actions)); await MarkDirty(); }
+    /// <summary>Returns interaction behavior to the parent.</summary>
+    async Task ResetInteraction() { Draft.Overrides.Interaction = null; await MarkDirty(); }
+    /// <summary>Shows the current draft using the application's real notification renderer.</summary>
+    void Preview() { var result = RunSafely(() => App.Hub.Apply(new() { Notification = new() { Theme = NotificationProtocol.Copy(Draft), Title = Strings.ThemePreviewTitle, Message = Strings.ThemePreviewMessage, Source = AppConstants.Product.Name } })); Error = result.Succeeded ? null : Strings.OperationFailed; }
+    /// <summary>Plays the current effective sound with cancellation when the editor closes.</summary>
+    async Task Play() { if (Resolved.Sound is not { } sound) return; Playing = true; using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(App.Hub.Lifetime); PreviewCancellation = cancellation; try { await App.Host.PlaySoundAsync(NotificationProtocol.Copy(sound), cancellation.Token); } finally { Playing = false; PreviewCancellation = null; } }
+    /// <summary>Transfers navigation to the existing sound editor through the panel's leave guard.</summary>
+    async Task OpenSounds() { if (Dirty || SoundDirty) { Error = Strings.SaveOrDiscardTheme; return; } await EditSounds.InvokeAsync(); }
+    /// <summary>Edits a detached copy of this theme's effective sound, including an inherited voice.</summary>
+    void OpenThemeSound() { if (Resolved.Sound is not { } sound) return; PreviewCancellation?.Cancel(); ThemeSoundDraft = NotificationProtocol.Copy(sound); SoundDirty = false; EditingSound = true; }
+    /// <summary>Places the edited actual sound into this theme's unsaved patch without publishing it.</summary>
+    async Task SaveSound(SoundPattern sound) { Draft.Overrides.Sound = new(NotificationProtocol.Copy(sound)); SoundDirty = false; EditingSound = false; ThemeSoundDraft = null; await MarkDirty(); }
+    /// <summary>Includes the nested sound draft in the panel's existing leave guard.</summary>
+    async Task SoundChanged(bool dirty) { SoundDirty = dirty; await DirtyChanged.InvokeAsync(Dirty || SoundDirty); }
+    /// <summary>Requests a discard decision when closing an unfinished theme-owned sound.</summary>
+    async Task CancelSound() { if (SoundDirty) { ConfirmSoundDiscard = true; return; } await DiscardSound(); }
+    /// <summary>Discards only the nested sound draft, retaining all earlier unsaved theme changes.</summary>
+    async Task DiscardSound() { ConfirmSoundDiscard = false; EditingSound = false; SoundDirty = false; ThemeSoundDraft = null; await DirtyChanged.InvokeAsync(Dirty); }
+    /// <summary>Keeps Escape scoped to the nested sound discard decision.</summary>
+    void SoundDialogKey(KeyboardEventArgs args) { if (args.Key == "Escape") ConfirmSoundDiscard = false; }
+    /// <summary>Stops an in-progress audition when leaving Themes.</summary>
+    public void Dispose() => PreviewCancellation?.Cancel();
+}

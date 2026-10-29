@@ -3,10 +3,12 @@
     <fieldset disabled="@Saving" class="form-section">
         <legend>@Strings.NotificationContent</legend>
         <div class="form-grid">
+            <label class="field span-all">@Strings.Source<input @bind="Draft.Source" /></label>
             <label class="field span-all">@Strings.Title<input @bind="Draft.Title" /></label>
             <label class="field span-all">@Strings.Message<textarea rows="@ThemeCatalog.Get().Layout.ReplyRows" @bind="Draft.Message"></textarea></label>
+            <label class="field span-all">@Strings.Theme<select value="@(Draft.Theme?.Name ?? nameof(NotificationThemes.Daily))" @onchange="SelectTheme">@if (Draft.Theme is { } current && !ThemeCatalog.Themes.Any(theme => theme.Name == current.Name)) { <option value="@current.Name">@current.Name</option> }@foreach (var theme in ThemeCatalog.Themes) { <option value="@theme.Name">@ThemeStyle.Label(theme.Name)</option> }</select></label>
+            <div class="theme-summary span-all"><span>@(Effective.Sound is { } effectiveSound ? ThemeStyle.Label(effectiveSound.Name) : Strings.Silent)</span><span>@(Effective.Lifetime is ExpiringLifetime expiring ? string.Format(Strings.SecondsFormat, expiring.Duration.TotalSeconds) : Strings.Sticky)</span><span>@ThemeStyle.Label(Effective.Priority)</span></div>
             <label class="field">@Strings.Kind<select @bind="ContentKey">@foreach (var choice in Contents) { <option value="@choice.Key">@ThemeStyle.Label(choice.Key)</option> }</select></label>
-            <label class="field">@Strings.Level<select @bind="Draft.Level">@foreach (var level in Enum.GetValues<NotificationLevel>()) { <option value="@level">@ThemeStyle.Label(level)</option> }</select></label>
             @if (Request.Id is not null && Selected.Key != OriginalContent) { <small class="span-all muted">@Strings.ContentTypeChange</small> }
             @if (HasProgress) { <label class="field">@Strings.ProgressValue<input type="number" min="0" max="@ProgressDraft?.Maximum" step="any" @bind="ProgressValue" /></label> }
             @if (HasImage) { <label class="field span-all">@Strings.ImagePath<input @bind="ImagePath" /></label> }
@@ -15,7 +17,7 @@
                 <div class="editor-items span-all">
                     @foreach (var action in ActionDraft)
                     {
-                        <div class="row" @key="action.Id"><label class="field">@Strings.ActionButton<input @bind="action.Label" placeholder="@action.DefaultLabel" />@if (ActionHint(action) is { } hint) { <small class="muted">@hint</small> }</label><button type="button" class="danger" @onclick="() => ChangeAction(action.Id)">@Strings.Delete</button></div>
+                        <div class="row" @key="action.Id"><label class="field">@Strings.ActionButton<input @bind="action.Label" placeholder="@action.DefaultLabel" />@if (ActionHint(action) is { } hint) { <small class="muted">@hint</small> }</label><label class="check"><input type="checkbox" checked="@action.IsPrimary" @onchange="args => SetPrimary(action.Id, args)" />@Strings.PrimaryAction</label><button type="button" class="danger" @onclick="() => ChangeAction(action.Id)">@Strings.Delete</button></div>
                     }
                     <button type="button" @onclick="() => ChangeAction()">@Strings.AddAction</button>
                 </div>
@@ -48,13 +50,17 @@
         }
     </fieldset>
     <details class="form-section" open="@(Request.Id is not null)">
-        <summary>@Strings.AdvancedOptions</summary>
+        <summary>@Strings.ThisNotificationOnly</summary>
         <fieldset disabled="@Saving" class="form-grid">
-            <label class="field">@Strings.Source<input @bind="Draft.Source" /></label>
-            <label class="field">@Strings.Theme<select value="@Draft.Theme?.Name" @onchange="SelectTheme"><option value="">@Strings.UsePanelTheme</option>@if (Request.Theme is { } current && !ThemeCatalog.Themes.Any(theme => theme.Name == current.Name)) { <option value="@current.Name">@current.Name</option> }@foreach (var theme in ThemeCatalog.Themes) { <option value="@theme.Name">@theme.Name</option> }</select></label>
-            <label class="check"><input type="checkbox" @bind="Sticky" />@Strings.Sticky</label>
-            <label class="field">@Strings.Duration<input type="number" min="0" step="any" disabled="@Sticky" @bind="Seconds" /></label>
-            <label class="check"><input type="checkbox" @bind="Silent" />@Strings.Silent</label>
+            <label class="field">@Strings.Sound<select value="@SoundSelection" @onchange="ChangeSound"><option value="inherit">@Strings.InheritFromTheme</option><option value="silent">@Strings.Silent</option>@foreach (var sound in App.Hub.Preferences.Sounds) { <option value="@sound.Id">@ThemeStyle.Label(sound.Name)</option> }</select></label>
+            <label class="field">@Strings.Closing<select value="@LifetimeSelection" @onchange="ChangeLifetime"><option value="inherit">@Strings.InheritFromTheme</option><option value="expire">@Strings.AfterDuration</option><option value="acknowledged">@Strings.Sticky</option></select></label>
+            @if (LifetimeSelection == "expire") { <label class="field">@Strings.Duration<input type="number" min="0.1" step="any" @bind="Seconds" @bind:after="UpdateSeconds" /></label> }
+            <label class="field">@Strings.Priority<select value="@PrioritySelection" @onchange="ChangePriority"><option value="inherit">@Strings.InheritFromTheme</option>@foreach (var priority in Enum.GetValues<NotificationPriority>()) { <option value="@priority">@ThemeStyle.Label(priority)</option> }</select></label>
+            <label class="field">@Strings.InteractionMode<select value="@InteractionSelection" @onchange="ChangeInteraction"><option value="inherit">@Strings.InheritFromTheme</option><option value="actions">@Strings.ActionButtons</option><option value="acknowledge">@Strings.ClickToAcknowledge</option></select></label>
+            <div class="span-all"><ThemeFields Overrides="Draft.Overrides!.Palette!" Effective="Effective.Theme.Palette" Path="Palette" Origins="Effective.FieldOrigins" Fields="OverrideColors" Changed="MarkDirty" /></div>
+            <div class="span-all"><ThemeFields Overrides="Draft.Overrides!.Typography!" Effective="Effective.Theme.Typography" Path="Typography" Origins="Effective.FieldOrigins" Fields="OverrideText" Changed="MarkDirty" /></div>
+            <button type="button" @onclick="ResetOverrides">@Strings.ReturnToInherited</button>
+            <small class="span-all muted">@Strings.OneSendOverridesDescription</small>
         </fieldset>
     </details>
     @if (Error is not null) { <p class="error" role="alert">@Error</p> }
@@ -75,7 +81,7 @@
         new(nameof(Strings.Reminder), new() { Schedule = new(), Lifetime = NotificationLifetimes.UntilAcknowledged }, request => request.Schedule is not null),
         new(nameof(Strings.Progress), new() { Progress = new() }, request => request.Progress is not null),
         new(nameof(Strings.Image), new() { Image = new(new Uri(AppPaths.Root)) }, request => request.Image is not null),
-        new(nameof(Strings.Choice), new() { Actions = [new CallbackAction { Label = Strings.Confirm }] }, request => request.Actions.Count > 0),
+        new(nameof(Strings.Choice), new() { Actions = [new CallbackAction { Label = Strings.Confirm, IsPrimary = true }] }, request => request.Actions.Count > 0),
         new(nameof(Strings.Input), new() { Input = new() }, request => request.Input is not null),
         new(nameof(Strings.Checklist), new() { Checklist = [new() { Text = Strings.Confirm }] }, request => request.Checklist.Count > 0),
         new(nameof(Strings.Custom), new() { Template = new() }, request => request.Template is not null)
@@ -87,6 +93,13 @@
         new(nameof(Strings.Monthly), NotificationRecurrences.Monthly), new(nameof(Strings.Yearly), NotificationRecurrences.Yearly), new(nameof(Strings.Interval), NotificationRecurrences.Hourly)
     ];
     NotificationRequest Draft = new();
+    ResolvedNotification Effective => ThemeResolver.Resolve(Draft);
+    static readonly string[] OverrideColors = ["LightBackground", "DarkBackground", "LightAccent", "DarkAccent"];
+    static readonly string[] OverrideText = ["CardTitle", "Body"];
+    string SoundSelection => Draft.Overrides?.Sound is { } changed ? changed.Value?.Id.ToString() ?? "silent" : Draft.Sound?.Id.ToString() ?? (Draft.Silent is true ? "silent" : "inherit");
+    string LifetimeSelection => Draft.Overrides?.Lifetime is not null || Draft.Lifetime is not null ? Effective.Lifetime is AcknowledgedLifetime ? "acknowledged" : "expire" : "inherit";
+    string PrioritySelection => Draft.Overrides?.Priority is not null || Draft.Priority is not null ? Effective.Priority.ToString() : "inherit";
+    string InteractionSelection => Draft.Overrides?.Interaction is not null || Draft.Interaction is not null ? Effective.Interaction.ClickToAcknowledge ? "acknowledge" : "actions" : "inherit";
     NotificationRequest? Prepared;
     ContentChoice Selected = null!;
     string OriginalContent = string.Empty;
@@ -98,7 +111,7 @@
         set
         {
             Selected = Contents.Single(choice => choice.Key == value);
-            Sticky = AppConstants.Notifications.ResolveLifetime(ContentChanged ? Selected.Content : Draft) is AcknowledgedLifetime;
+            if (ContentChanged && Selected.Key == nameof(Strings.Reminder)) Draft.Theme = NotificationProtocol.Copy(ThemeCatalog.Get(nameof(NotificationThemes.Reminder)));
             if (Selected.Content.Schedule is not null) ScheduleEnabled = true;
             ActionDraft = NotificationProtocol.Copy(ContentChanged ? Selected.Content.Actions : Draft.Actions);
             ChecklistDraft = NotificationProtocol.Copy(ContentChanged ? Selected.Content.Checklist : Draft.Checklist);
@@ -118,11 +131,6 @@
     DateTime? Target;
     double IntervalMinutes;
     double Seconds;
-    double OriginalSeconds;
-    bool Sticky;
-    bool OriginalSticky;
-    bool Silent;
-    bool OriginalSilent;
     bool ScheduleEnabled;
     bool Saving;
     double ProgressValue;
@@ -139,17 +147,16 @@
     protected override void OnParametersSet()
     {
         if (ReferenceEquals(Prepared, Request)) return;
-        Prepared = Request; Draft = NotificationProtocol.Copy(Request); Error = null;
-        Draft.Level ??= AppConstants.Notifications.Level;
+        Prepared = Request; Draft = NotificationProtocol.Copy(Request); Draft.Theme ??= NotificationProtocol.Copy(Request.Resolved?.Theme ?? ThemeCatalog.Get(nameof(NotificationThemes.Daily))); Draft.Resolved = null; Error = null;
+        Draft.Overrides ??= new(); Draft.Overrides.Palette ??= new(); Draft.Overrides.Typography ??= new();
         Selected = Contents.Last(choice => choice.Matches(Draft)); OriginalContent = Selected.Key;
         ScheduleEnabled = Draft.Schedule is not null;
         Target = Draft.Schedule?.At?.LocalDateTime ?? (ScheduleEnabled && Draft.Id is { } id ? App.Hub.Snapshot().FirstOrDefault(entry => entry.Id == id)?.DueAt.LocalDateTime : null);
         var recurrence = Draft.Schedule?.Recurrence;
         RecurrenceKey = recurrence switch { IntervalRecurrence interval when interval.Every != NotificationRecurrences.Hourly.Every => nameof(Strings.Interval), IntervalRecurrence => nameof(Strings.Hourly), WeeklyRecurrence weekly when weekly.Days.SequenceEqual(NotificationRecurrences.Weekdays.Days) => nameof(Strings.Weekdays), WeeklyRecurrence => nameof(Strings.Weekly), MonthlyRecurrence => nameof(Strings.Monthly), DailyRecurrence => nameof(Strings.Daily), YearlyRecurrence => nameof(Strings.Yearly), _ => nameof(Strings.None) };
         IntervalMinutes = (recurrence as IntervalRecurrence)?.Every.TotalMinutes ?? NotificationRecurrences.Hourly.Every.TotalMinutes;
-        Seconds = OriginalSeconds = (Draft.Lifetime as ExpiringLifetime)?.Duration.TotalSeconds ?? NotificationLifetimes.Default.Duration.TotalSeconds;
-        Sticky = OriginalSticky = AppConstants.Notifications.ResolveLifetime(Draft) is AcknowledgedLifetime;
-        Silent = OriginalSilent = Draft.Silent ?? false; ProgressValue = OriginalProgress = Draft.Progress?.Value ?? 0;
+        Seconds = (Effective.Lifetime as ExpiringLifetime)?.Duration.TotalSeconds ?? NotificationLifetimes.Default.Duration.TotalSeconds;
+        ProgressValue = OriginalProgress = Draft.Progress?.Value ?? 0;
         WeeklyDays = (recurrence as WeeklyRecurrence)?.Days.ToHashSet() ?? [];
         MonthlyDays = string.Join(",", (recurrence as MonthlyRecurrence)?.Days ?? []);
         OriginalScheduleState = ScheduleState;
@@ -163,7 +170,7 @@
     {
         if (Saving) return;
         Error = null;
-        if (!Sticky && (!double.IsFinite(Seconds) || Seconds <= 0 || Seconds > (DateTimeOffset.MaxValue - DateTimeOffset.Now).TotalSeconds)) { Error = Strings.InvalidDuration; return; }
+        if (LifetimeSelection == "expire" && (!double.IsFinite(Seconds) || Seconds <= 0 || Seconds > (DateTimeOffset.MaxValue - DateTimeOffset.Now).TotalSeconds)) { Error = Strings.InvalidDuration; return; }
         if (ScheduleEnabled && RecurrenceKey == nameof(Strings.Interval) && (!double.IsFinite(IntervalMinutes) || IntervalMinutes <= 0 || IntervalMinutes > TimeSpan.MaxValue.TotalMinutes)) { Error = Strings.InvalidInterval; return; }
         int[] monthDays = [];
         if (ScheduleEnabled && RecurrenceKey == nameof(Strings.Monthly))
@@ -187,7 +194,6 @@
                 }
                 candidate.Checklist = NotificationProtocol.Copy(ChecklistDraft);
                 candidate.Actions = NotificationProtocol.Copy(ActionDraft);
-                if (Silent != OriginalSilent) candidate.Silent = Silent;
                 if (ScheduleState != OriginalScheduleState || ContentChanged)
                 {
                     NotificationRecurrence? recurrence = RecurrenceKey == nameof(Strings.Interval) ? new IntervalRecurrence(TimeSpan.FromMinutes(IntervalMinutes))
@@ -210,7 +216,7 @@
                     if (file is not null && !file.Exists) { Error = string.Format(Strings.FileUnavailable, file.FullName); return null; }
                     candidate.Template = new(file);
                 }
-                if (ContentChanged || Sticky != OriginalSticky || Seconds != OriginalSeconds || (AppConstants.Notifications.ResolveLifetime(candidate) is AcknowledgedLifetime) != Sticky) candidate.Lifetime = Sticky ? NotificationLifetimes.UntilAcknowledged : new ExpiringLifetime(TimeSpan.FromSeconds(Seconds));
+                candidate.Resolved = null;
                 return candidate;
             });
             if (!result.Succeeded) Error = Strings.OperationFailed;
@@ -225,12 +231,26 @@
         string? name = args.Value?.ToString();
         Draft.Theme = string.IsNullOrWhiteSpace(name) ? null : NotificationProtocol.Copy(Request.Theme is { } supplied && supplied.Name == name && !ThemeCatalog.Themes.Any(theme => theme.Name == name) ? supplied : ThemeCatalog.Get(name, required: true));
     }
+    /// <summary>Writes only the explicitly selected one-send sound while clearing its legacy equivalent.</summary>
+    async Task ChangeSound(ChangeEventArgs args) { string value = args.Value?.ToString() ?? "inherit"; Draft.Sound = null; Draft.Silent = null; Draft.Overrides!.Sound = value == "inherit" ? null : new(value == "silent" ? null : NotificationProtocol.Copy(App.Hub.Preferences.Sounds.First(sound => sound.Id.ToString() == value))); await MarkDirty(); }
+    /// <summary>Changes only the one-send lifetime policy and retains omission when inheriting.</summary>
+    async Task ChangeLifetime(ChangeEventArgs args) { string value = args.Value?.ToString() ?? "inherit"; Draft.Lifetime = null; Draft.Overrides!.Lifetime = value == "inherit" ? null : new(value == "acknowledged" ? NotificationLifetimes.UntilAcknowledged : new ExpiringLifetime(TimeSpan.FromSeconds(Seconds))); await MarkDirty(); }
+    /// <summary>Updates an already explicit duration without copying inherited delivery settings.</summary>
+    async Task UpdateSeconds() { if (double.IsFinite(Seconds) && Seconds > 0) Draft.Overrides!.Lifetime = new(new ExpiringLifetime(TimeSpan.FromSeconds(Seconds))); await MarkDirty(); }
+    /// <summary>Changes only the one-send queue priority.</summary>
+    async Task ChangePriority(ChangeEventArgs args) { Draft.Priority = null; Draft.Overrides!.Priority = Enum.TryParse<NotificationPriority>(args.Value?.ToString(), out var priority) ? new(priority) : null; await MarkDirty(); }
+    /// <summary>Changes only the one-send interaction mode.</summary>
+    async Task ChangeInteraction(ChangeEventArgs args) { string value = args.Value?.ToString() ?? "inherit"; Draft.Interaction = null; Draft.Overrides!.Interaction = value == "inherit" ? null : new(NotificationProtocol.Copy(value == "acknowledge" ? NotificationInteractions.ClickToAcknowledge : NotificationInteractions.Actions)); await MarkDirty(); }
+    /// <summary>Removes per-send presentation and delivery changes so every field comes from the selected theme.</summary>
+    async Task ResetOverrides() { Draft.Overrides = new() { Palette = new(), Typography = new() }; Draft.Appearance = null; Draft.Sound = null; Draft.Silent = null; Draft.Lifetime = null; Draft.Priority = null; Draft.Interaction = null; await MarkDirty(); }
+    /// <summary>Marks one domain action as primary without changing its identity or effect.</summary>
+    async Task SetPrimary(string id, ChangeEventArgs args) { foreach (var action in ActionDraft) action.IsPrimary = action.Id == id && args.Value is true; await MarkDirty(); }
     /// <summary>Updates the weekday selection represented in the schedule draft.</summary>
     void SelectDay(DayOfWeek day, ChangeEventArgs args) { if (args.Value is true) WeeklyDays.Add(day); else WeeklyDays.Remove(day); }
     /// <summary>Adds a callback button or removes exactly the row selected by its existing action identity.</summary>
     async Task ChangeAction(string? id = null)
     {
-        if (id is null) ActionDraft.Add(new CallbackAction { Label = Strings.Confirm }); else ActionDraft.RemoveAll(action => action.Id == id);
+        if (id is null) ActionDraft.Add(new CallbackAction { Label = Strings.Confirm, IsPrimary = ActionDraft.Count == 0 }); else ActionDraft.RemoveAll(action => action.Id == id);
         await MarkDirty();
     }
     /// <summary>Adds a checklist item or removes exactly the selected item without remapping any surviving identity.</summary>

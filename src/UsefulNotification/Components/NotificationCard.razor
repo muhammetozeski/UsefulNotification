@@ -2,34 +2,54 @@
 @if (!Toast)
 {
     <article class="notification-record">
-        <header class="record-meta"><span>@Entry.Request.Source</span><span>@ThemeStyle.Label(Entry.Status) · @DisplayTime.ToString(AppConstants.Notifications.TimeFormat)</span></header>
-        @if (Inactive)
-        {
+        @if (SourceIcon is not null) { <img class="sender-icon" src="@SourceIcon" alt="" /> }
+        else { <span class="sender-icon" style="@AccentStyle" aria-hidden="true">@SenderMonogram</span> }
+        <div class="record-body">
+            <header class="record-meta"><strong>@Entry.Request.Source</strong><time>@DisplayTime.ToString(AppConstants.Notifications.TimeFormat)</time><span class="theme-badge" style="@AccentStyle">@ThemeStyle.Label(Entry.Request.Theme?.Name ?? nameof(NotificationThemes.Daily))</span><span>@ThemeStyle.Label(Entry.Status)</span></header>
             <h2>@Entry.Request.Title</h2><p>@Entry.Request.Message</p>
-            @if (Entry.Status is NotificationStatus.Scheduled or NotificationStatus.Snoozed) { <p class="muted">@Strings.When: @Entry.DueAt.ToString(AppConstants.Notifications.TimeFormat)</p> }
+            @if (Entry.Request.Progress is { } progress) { <progress value="@progress.Value" max="@progress.Maximum"></progress>@if (progress.Label is not null) { <small>@progress.Label</small> } }
+            @if (Entry.Status is NotificationStatus.Scheduled or NotificationStatus.Snoozed) { <small>@Strings.When: @Entry.DueAt.ToString(AppConstants.Notifications.TimeFormat)</small> }
             @if (Entry.Current.Result?.Reply is { Length: > 0 } reply) { <p class="reply-result"><small>@Strings.SubmittedReply</small><br />@reply</p> }
-            @foreach (var item in Entry.Request.Checklist) { <p>@(Entry.Current.Result?.CheckedItems.Contains(item.Id) ?? item.Checked ? "☑" : "☐") @item.Text</p> }
+            @foreach (var item in Entry.Request.Checklist)
+            {
+                @if (Inactive) { <p>@(Entry.Current.Result?.CheckedItems.Contains(item.Id) ?? item.Checked ? "☑" : "☐") @item.Text</p> }
+                else { <label class="check"><input type="checkbox" checked="@Checked.Contains(item.Id)" @onchange="args => Check(item.Id, args)" />@item.Text</label> }
+            }
             @if (Entry.Request.Template is not null && CustomHtml is not null) { <details><summary>@Strings.Preview</summary><iframe class="custom-template" title="@Entry.Request.Title" sandbox="" srcdoc="@CustomHtml"></iframe></details> }
-        }
-        else { <NotificationCard Entry="Entry" Toast="true" /> }
-        <footer class="record-actions"><div class="row"><button @onclick="() => Edit.InvokeAsync(Entry)">@Strings.Edit</button><details><summary>@Strings.MoreActions</summary><div class="card-tools"><button @onclick="Duplicate">@Strings.Duplicate</button><button @onclick="Retry">@Strings.Retry</button>@if (ManualOrder) { <button @onclick="() => Move(-1)">@Strings.MoveUp</button><button @onclick="() => Move(1)">@Strings.MoveDown</button> }<button class="danger" @onclick="() => DeleteRequested.InvokeAsync(Entry)">@Strings.Delete</button></div></details></div></footer>
-        @if (Error is not null) { <p class="error" role="alert">@Error</p> }
+            @if (Entry.Request.Image is not null) { <img class="record-image" src="@Image" alt="@Entry.Request.Title" /> }
+            @if (!Inactive && Entry.Request.Input is { } input)
+            {
+                @if (input.Multiline) { <textarea rows="@Appearance.Layout.ReplyRows" placeholder="@(input.Placeholder ?? Strings.InputPlaceholder)" @bind="Reply"></textarea> }
+                else { <input placeholder="@(input.Placeholder ?? Strings.InputPlaceholder)" @bind="Reply" /> }
+            }
+            <footer class="record-actions">
+                @if (!Inactive)
+                {
+                    @foreach (var action in Entry.Request.Actions) { <button class="@(action.IsPrimary ? "primary" : null)" @onclick="() => Respond(rendered, action)">@(action.Label ?? action.DefaultLabel)</button> }
+                    @if (Entry.Request.Input is not null && Entry.Request.Actions.All(action => action is not ReplyAction)) { <button class="@(Entry.Request.Actions.Any(action => action.IsPrimary) ? null : "primary")" @onclick="() => Respond(rendered, new ReplyAction())">@Strings.Reply</button> }
+                    <button class="quiet" @onclick="() => Respond(rendered)">@Strings.Dismiss</button>
+                }
+                <button class="quiet" @onclick="() => Edit.InvokeAsync(Entry)">@Strings.Edit</button>
+                <details><summary>@Strings.MoreActions</summary><div class="card-tools"><button @onclick="Duplicate">@Strings.Duplicate</button><button @onclick="Retry">@Strings.Retry</button>@if (ManualOrder) { <button @onclick="() => Move(-1)">@Strings.MoveUp</button><button @onclick="() => Move(1)">@Strings.MoveDown</button> }<button class="danger" @onclick="() => DeleteRequested.InvokeAsync(Entry)">@Strings.Delete</button></div></details>
+            </footer>
+            @if (Error is not null) { <p class="error" role="alert">@Error</p> }
+        </div>
     </article>
 }
-else
-{
-@if (Entry.Request.Template is not null && CustomHtml is not null)
+else if (Entry.Request.Template is not null && CustomHtml is not null)
 {
     <iframe @key="(Entry.Current.Id, Entry.Current.ContentRevision)" class="custom-template" title="@Entry.Request.Title" data-notification="@Entry.Id" data-occurrence="@Entry.Current.Id" data-revision="@Entry.Current.ContentRevision" sandbox="@(Inactive ? string.Empty : "allow-scripts")" srcdoc="@CustomHtml" @onmouseenter="() => Hover(rendered, true)" @onmouseleave="() => Hover(rendered, false)"></iframe>
 }
 else
 {
     <style>@((MarkupString)ThemeStyle.Render(Appearance, $"[data-card='{Entry.Id}']"))</style>
-    <article class="card" data-card="@Entry.Id" data-notification="@Entry.Id" data-occurrence="@Entry.Current.Id" data-revision="@Entry.Current.ContentRevision" style="@ThemeStyle.CardStyle(Entry)" @onmouseenter="() => Hover(rendered, true)" @onmouseleave="() => Hover(rendered, false)">
+    <article class="card @(Interaction.ClickToAcknowledge ? "has-acknowledge" : null)" data-card="@Entry.Id" data-notification="@Entry.Id" data-occurrence="@Entry.Current.Id" data-revision="@Entry.Current.ContentRevision" style="@ThemeStyle.CardStyle(Entry)" @onmouseenter="() => Hover(rendered, true)" @onmouseleave="() => Hover(rendered, false)">
+        @if (Interaction.ClickToAcknowledge) { <button class="acknowledge-target" disabled="@Inactive" aria-label="@Strings.Acknowledge" @onclick="() => Respond(rendered)"></button> }
         <header class="card-header">
-            <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4M12 1v2" /></svg>
+            @if (SourceIcon is not null) { <img class="sender-icon" src="@SourceIcon" alt="" /> }
+            else { <span class="sender-icon" aria-hidden="true">@SenderMonogram</span> }
             <div class="meta"><span class="sender">@Entry.Request.Source</span><time>@DisplayTime.ToString(AppConstants.Notifications.TimeFormat)</time></div>
-            <button disabled="@Inactive" title="@Strings.Dismiss" aria-label="@Strings.Dismiss" @onclick="() => Respond(rendered)">&#x2715;</button>
+            @if (Interaction.ShowDismiss) { <button disabled="@Inactive" title="@Strings.Dismiss" aria-label="@Strings.Dismiss" @onclick="() => Respond(rendered)">&#x2715;</button> }
         </header>
         <div class="card-content">
             <h2>@Entry.Request.Title</h2><p>@Entry.Request.Message</p>
@@ -41,23 +61,21 @@ else
                 else { <input disabled="@Inactive" placeholder="@(input.Placeholder ?? Strings.InputPlaceholder)" @bind="Reply" /> }
             }
             @foreach (var item in Entry.Request.Checklist) { <label class="check"><input disabled="@Inactive" type="checkbox" checked="@Checked.Contains(item.Id)" @onchange="args => Check(item.Id, args)" />@item.Text</label> }
-            @if (Error is not null) { <small>@Error</small> }
+            @if (Error is not null) { <small role="alert">@Error</small> }
             @if (ShowSnoozeOptions && !Inactive) { <div class="snooze-options">@foreach (TimeSpan delay in AppConstants.Notifications.ResolveSnooze(Entry.Request)) { <button @onclick="() => Respond(rendered, snooze: delay)">@ThemeStyle.MinutesLabel(delay.TotalMinutes)</button> }</div> }
-            <div class="card-footer">
-                <div class="card-actions">
-                    @if (Entry.Request.Schedule is not null || Entry.Request.Snooze is not null)
+            @if (Interaction.ShowSnooze || Entry.Request.Actions.Count > 0 || Entry.Request.Input is not null)
+            {
+                <footer class="card-footer"><div class="card-actions">
+                    @if (Interaction.ShowSnooze)
                     {
-                        <span class="snooze"><button disabled="@Inactive" @onclick="() => Respond(rendered, snooze: SnoozeDelay)">@Strings.Snooze</button><button disabled="@Inactive" title="@Strings.Snooze" aria-label="@Strings.Snooze" aria-expanded="@ShowSnoozeOptions" @onclick="() => ShowSnoozeOptions = !ShowSnoozeOptions">&#x25BE;</button></span>
+                        <span class="snooze"><button disabled="@Inactive" @onclick="() => Respond(rendered, snooze: SnoozeDelay)">@Strings.Snooze</button><button disabled="@Inactive" title="@Strings.SnoozeOptions" aria-label="@Strings.SnoozeOptions" aria-expanded="@ShowSnoozeOptions" @onclick="() => ShowSnoozeOptions = !ShowSnoozeOptions">&#x25BE;</button></span>
                     }
-                    @foreach (var action in Entry.Request.Actions) { <button disabled="@Inactive" class="@(action == Entry.Request.Actions.LastOrDefault() ? "primary" : null)" @onclick="() => Respond(rendered, action)">@(action.Label ?? action.DefaultLabel)</button> }
-                    @if (Entry.Request.Input is not null && Entry.Request.Actions.All(action => action is not ReplyAction)) { <button disabled="@Inactive" class="primary" @onclick="() => Respond(rendered, new ReplyAction())">@Strings.Reply</button> }
-                    <button disabled="@Inactive" class="@(Entry.Request.Actions.Count == 0 && Entry.Request.Input is null ? "primary" : null)" @onclick="() => Respond(rendered)">@Strings.Dismiss</button>
-                </div>
-            </div>
+                    @foreach (var action in Entry.Request.Actions) { <button disabled="@Inactive" class="@(action.IsPrimary ? "primary domain-action" : null)" @onclick="() => Respond(rendered, action)">@(action.Label ?? action.DefaultLabel)</button> }
+                    @if (Entry.Request.Input is not null && Entry.Request.Actions.All(action => action is not ReplyAction)) { <button disabled="@Inactive" class="@(Entry.Request.Actions.Any(action => action.IsPrimary) ? null : "primary domain-action")" @onclick="() => Respond(rendered, new ReplyAction())">@Strings.Reply</button> }
+                </div></footer>
+            }
         </div>
     </article>
-}
-
 }
 @code {
     [Parameter, EditorRequired] public NotificationEntry Entry { get; set; } = null!;
@@ -65,22 +83,23 @@ else
     [Parameter] public bool ManualOrder { get; set; }
     [Parameter] public bool History { get; set; }
     [Parameter] public EventCallback<NotificationEntry> DeleteRequested { get; set; }
+    [Parameter] public EventCallback<NotificationEntry> Edit { get; set; }
     bool ShowSnoozeOptions;
     DateTimeOffset DisplayTime => Entry.Current.VisibleAt ?? Entry.Current.ClosedAt ?? Entry.Current.DueAt;
-    [Parameter] public EventCallback<NotificationEntry> Edit { get; set; }
     bool Inactive => Entry.Current.Result is not null || Entry.Current.Action is not null || Entry.Status is not (NotificationStatus.Pending or NotificationStatus.Visible);
-    string? Reply;
-    string? Error;
-    string? Image;
-    string? CustomHtml;
+    string SenderMonogram => System.Globalization.StringInfo.GetNextTextElement(Entry.Request.Source?.Trim() is { Length: > 0 } source ? source : AppConstants.Product.Name).ToUpper(System.Globalization.CultureInfo.CurrentCulture);
+    string AccentStyle => $"color:light-dark({(Appearance.Palette.LightAccent ?? Appearance.Palette.Accent).ToCss()},{(Appearance.Palette.DarkAccent ?? Appearance.Palette.Accent).ToCss()})";
+    string? Reply, Error, Image, SourceIcon, CustomHtml, PreparedContent;
     Guid PreparedOccurrence;
-    string? PreparedContent;
     NotificationTheme Appearance = null!;
+    NotificationInteraction Interaction = NotificationInteractions.Actions;
     HashSet<string> Checked = [];
     TimeSpan SnoozeDelay = AppConstants.Notifications.ResolveSnooze()[0];
+    /// <summary>Prepares each accepted content revision while retaining user input within the same occurrence.</summary>
     protected override void OnParametersSet()
     {
-        Appearance = ThemeCatalog.For(Entry.Request);
+        var resolved = Entry.Current.Resolved ?? Entry.Request.Resolved ?? ThemeResolver.Resolve(Entry.Request);
+        Appearance = resolved.Theme; Interaction = resolved.Interaction;
         if (PreparedOccurrence != Entry.Current.Id)
         {
             PreparedOccurrence = Entry.Current.Id; ShowSnoozeOptions = false; Reply = Entry.Current.Result?.Reply ?? Entry.Request.Input?.Value;
@@ -89,23 +108,26 @@ else
         }
         string content = System.Text.Json.JsonSerializer.Serialize(new { Entry.Request, Theme = Appearance, ThemeCatalog.Revision }, AppConstants.WireJson);
         if (content == PreparedContent) return;
-        Image = null; CustomHtml = null;
-        var result = RunSafely(() =>
-        {
-            if (Entry.Request.Image is not null) Image = ThemeStyle.ImageSource(Entry.Request.Image);
-            if (Entry.Request.Template is not null) CustomHtml = ThemeStyle.Template(Entry);
-        });
+        Image = null; SourceIcon = null; CustomHtml = null;
+        var result = RunSafely(() => { if (Entry.Request.Image is not null) Image = ThemeStyle.ImageSource(Entry.Request.Image); if (Entry.Request.SourceIcon is not null) SourceIcon = ThemeStyle.ImageSource(Entry.Request.SourceIcon); if (Entry.Request.Template is not null) CustomHtml = ThemeStyle.Template(Entry); });
         if (result.Succeeded) { PreparedContent = content; Error = null; } else Error = Strings.OperationFailed;
     }
+    /// <summary>Submits the control's captured occurrence and revision so a stale card cannot complete newer content.</summary>
     async Task Respond(RenderReceipt rendered, NotificationAction? action = null, TimeSpan? snooze = null)
     {
         var result = await RunSafelyAsync(async token => await App.Hub.InteractAsync(rendered.NotificationId, action, Reply, Checked.ToArray(), snooze: snooze, occurrenceId: rendered.OccurrenceId, revision: rendered.ContentRevision));
         Error = result.Succeeded ? null : Strings.OperationFailed;
     }
+    /// <summary>Updates hover lifetime ownership for the rendered occurrence.</summary>
     async Task Hover(RenderReceipt rendered, bool hover) => await RunSafelyAsync(async token => await App.Hub.InteractAsync(rendered.NotificationId, hover: hover, occurrenceId: rendered.OccurrenceId, revision: rendered.ContentRevision));
+    /// <summary>Updates one checklist item's selected state without completing the card.</summary>
     void Check(string id, ChangeEventArgs args) { if (args.Value is true) Checked.Add(id); else Checked.Remove(id); }
+    /// <summary>Creates a new unscheduled series with detached request content.</summary>
     void Duplicate() => Manage(new() { Notification = Entry.Request with { Id = Guid.NewGuid(), Schedule = null, Tag = null } });
+    /// <summary>Displays an active series again or creates a new send from history.</summary>
     void Retry() { if (History) Duplicate(); else Manage(new() { Operation = NotificationOperation.Retry, Id = Entry.Id }); }
+    /// <summary>Changes this series' position in the persisted manual order.</summary>
     void Move(int direction) => Manage(new() { Operation = NotificationOperation.Move, Id = Entry.Id, Order = App.Hub.Snapshot().OrderBy(item => item.Order).Select(item => item.Id).ToList().IndexOf(Entry.Id) + direction });
+    /// <summary>Runs a list operation through the hub's durable command boundary.</summary>
     void Manage(NotificationCommand command) { var result = RunSafely(() => App.Hub.Apply(command)); Error = result.Succeeded ? null : Strings.OperationFailed; }
 }

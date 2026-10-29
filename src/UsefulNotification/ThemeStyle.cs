@@ -9,6 +9,8 @@ namespace UsefulNotification.Desktop;
 /// <summary>Generates all shipped CSS from C# theme objects and renders isolated custom HTML templates.</summary>
 internal static class ThemeStyle
 {
+    /// <summary>Keeps application controls on a neutral surface independently of a notification's selected theme.</summary>
+    public static NotificationTheme PanelTheme => ThemeCatalog.PanelTheme;
     static ConcurrentDictionary<string, string> StyleCache = new();
     static ConcurrentDictionary<string, (DateTime Modified, string Content)> TemplateCache = new(StringComparer.OrdinalIgnoreCase);
     static ConcurrentDictionary<string, (DateTime Modified, string Content)> ImageCache = new(StringComparer.OrdinalIgnoreCase);
@@ -34,7 +36,13 @@ internal static class ThemeStyle
     /// <returns>CSS without custom property declarations.</returns>
     public static string Render(NotificationTheme? theme = null, string? selector = null)
     {
-        theme ??= ThemeCatalog.Get();
+        theme ??= PanelTheme;
+        if (theme.Palette.LightBackground is not null || theme.Palette.DarkBackground is not null || theme.Palette.LightAccent is not null || theme.Palette.DarkAccent is not null)
+        {
+            NotificationTheme dark = theme with { Palette = SchemePalette(theme, light: false) };
+            NotificationTheme light = theme with { Palette = SchemePalette(theme, light: true) };
+            return Render(dark, selector) + "@media (prefers-color-scheme: light){" + Render(light, selector) + "}";
+        }
         string key = JsonSerializer.Serialize(theme, AppConstants.WireJson) + selector;
         if (StyleCache.TryGetValue(key, out string? prepared)) return prepared;
         var colors = theme.Palette;
@@ -42,6 +50,7 @@ internal static class ThemeStyle
         var layout = theme.Layout;
         string css = FormattableString.Invariant($$"""
         * { box-sizing: border-box; }
+        html { color-scheme: light dark; }
         html, body { margin: 0; padding: 0; background: {{colors.Background.ToCss()}}; color: {{colors.Text.ToCss()}}; font-family: {{text.Family}}; font-size: {{text.Body}}px; line-height: {{text.LineHeight}}; }
         body { overflow: hidden; }
         button, input, textarea, select, summary { font: inherit; color: inherit; }
@@ -145,6 +154,54 @@ internal static class ThemeStyle
         .dialog { width: min(100%, {{AppConstants.Windows.MinimumPanel.Width - layout.PagePadding * 2}}px); background: {{colors.Background.ToCss()}}; border: {{layout.Border}}px solid {{colors.Border.ToCss()}}; padding: {{layout.PagePadding}}px; display: flex; flex-direction: column; gap: {{layout.Padding}}px; }
         .dialog .actions { justify-content: flex-end; }
         """);
+        css += FormattableString.Invariant($$"""
+        .shell { background: {{colors.Background.ToCss()}}; }
+        .sidebar { background: {{colors.Background.ToCss()}}; }
+        .page-header { flex-shrink: 0; }
+        .card { isolation: isolate; border-radius: {{theme.Frame.CornerRadius}}px; }
+        .card-header { gap: 10px; margin-bottom: 12px; }
+        .sender-icon { display: grid; place-items: center; width: 32px; height: 32px; flex: 0 0 32px; border-radius: 8px; font-weight: 600; color: {{colors.Accent.ToCss()}}; background: {{System.Drawing.Color.FromArgb(28, colors.Accent).ToCss()}}; }
+        .card-header .sender { color: {{colors.Text.ToCss()}}; font-size: {{text.Small}}px; }
+        .card-header .meta { justify-content: space-between; }
+        .card-content { margin-left: 0; gap: 10px; }
+        .card-content h2, .card-content p { overflow-wrap: anywhere; white-space: pre-wrap; }
+        .card-content h2 { font-size: {{text.CardTitle}}px; }
+        .card-content p { font-size: {{text.Body}}px; }
+        .card-actions { width: 100%; }
+        .card-actions .domain-action { margin-left: auto; }
+        .card-footer { margin-top: 8px; }
+        .card.has-acknowledge { box-shadow: inset 0 0 0 1px {{System.Drawing.Color.FromArgb(153, colors.Accent).ToCss()}}, inset 0 0 29px 3px {{System.Drawing.Color.FromArgb(69, colors.Accent).ToCss()}}, 0 0 18px {{System.Drawing.Color.FromArgb(69, colors.Accent).ToCss()}}; }
+        .acknowledge-target { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; border: 0; border-radius: inherit; padding: 0; background: transparent; }
+        .acknowledge-target:hover:not(:disabled) { background: {{System.Drawing.Color.FromArgb(10, colors.Accent).ToCss()}}; }
+        .card.has-acknowledge > .card-header, .card.has-acknowledge > .card-content { position: relative; z-index: 2; pointer-events: none; }
+        .card.has-acknowledge button:not(.acknowledge-target), .card.has-acknowledge input, .card.has-acknowledge textarea, .card.has-acknowledge select, .card.has-acknowledge label.check, .card.has-acknowledge a, .card.has-acknowledge summary { position: relative; pointer-events: auto; }
+        .notification-record { display: grid; grid-template-columns: 38px minmax(0,1fr); column-gap: 14px; border-radius: 10px; background: {{colors.Surface.ToCss()}}; }
+        .record-body { min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+        .record-body h2 { font-size: 18px; }
+        .record-body p { white-space: pre-wrap; }
+        .record-image { max-width: 100%; max-height: {{layout.ImageHeight}}px; object-fit: contain; align-self: flex-start; }
+        .record-meta { justify-content: flex-start; gap: 10px; }
+        .record-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+        .theme-badge { border: 1px solid {{colors.Border.ToCss()}}; border-radius: 5px; padding: 2px 6px; font-size: 12px; }
+        .quiet { background: transparent; border-color: transparent; color: {{colors.Muted.ToCss()}}; }
+        .themes-layout { display: grid; grid-template-columns: 200px minmax(0,1fr); gap: 24px; }
+        .theme-tree { display: flex; flex-direction: column; gap: 4px; }
+        .theme-tree button { text-align: left; border-color: transparent; background: transparent; }
+        .theme-tree button[aria-current=true] { border-color: {{colors.Border.ToCss()}}; background: {{colors.Surface.ToCss()}}; }
+        .theme-workspace { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+        .theme-field { display: flex; flex-direction: column; gap: 6px; }
+        .field-origin { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 12px; color: {{colors.Muted.ToCss()}}; }
+        .field-origin button { min-height: 24px; padding: 0 4px; font-size: inherit; border: 0; background: transparent; text-decoration: underline; }
+        .theme-preview { max-width: 460px; }
+        .theme-preview .card { padding: 18px; }
+        input[type=color] { width: 100%; min-height: 38px; padding: 3px; }
+        .editor .form-section > fieldset { border: 0; padding: 0; margin: 0; }
+        .theme-summary { display: flex; flex-wrap: wrap; gap: 12px; color: {{colors.Muted.ToCss()}}; font-size: {{text.Small}}px; }
+        .theme-summary span + span::before { content: '·'; margin-right: 12px; }
+        .theme-workspace details h3 { margin-top: 20px; margin-bottom: 12px; }
+        .theme-workspace > .actions { padding-bottom: 4px; }
+        .theme-workspace .form-section > .form-grid { margin-top: 8px; }
+        """);
         if (selector is not null)
             css = Regex.Replace(css, @"(?<selectors>[^{}]+)\{(?<body>[^{}]*)\}", rule =>
             {
@@ -159,6 +216,8 @@ internal static class ThemeStyle
             .form-grid, .tone { grid-template-columns: minmax(0, 1fr); }
             .toolbar { align-items: stretch; }
             .toolbar .search-field { flex-basis: 100%; }
+            .themes-layout { grid-template-columns: minmax(0, 1fr); }
+            .theme-tree { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); }
         }
         """);
         if (StyleCache.Count >= AppConstants.RenderMemory.Styles) StyleCache.Clear();
@@ -175,12 +234,45 @@ internal static class ThemeStyle
     /// <returns>Inline style generated from its theme objects.</returns>
     public static string CardStyle(NotificationEntry entry)
     {
-        NotificationTheme theme = ThemeCatalog.For(entry.Request);
-        ThemePalette palette = theme.Palette;
+        NotificationTheme theme = entry.Current.Resolved?.Theme ?? ThemeCatalog.For(entry.Request);
+        ThemePalette dark = SchemePalette(theme, light: false), light = SchemePalette(theme, light: true);
         NotificationFrame frame = theme.Frame;
-        var accent = frame.AccentColor ?? palette.Levels.GetValueOrDefault(entry.Request.Level ?? AppConstants.Notifications.Level, palette.Accent);
-        string Color(BorderEdges edge) => (frame.AccentEdges.HasFlag(edge) ? accent : palette.Border).ToCss();
-        return FormattableString.Invariant($"background:{palette.Background.ToCss()};color:{palette.Text.ToCss()};border-style:{frame.Pattern.ToString().ToLowerInvariant()};border-width:{frame.Thickness.Top}px {frame.Thickness.Right}px {frame.Thickness.Bottom}px {frame.Thickness.Left}px;border-color:{Color(BorderEdges.Top)} {Color(BorderEdges.Right)} {Color(BorderEdges.Bottom)} {Color(BorderEdges.Left)};border-radius:{frame.CornerRadius}px;padding:{theme.Layout.Padding}px;font-family:{theme.Typography.Family};font-size:{theme.Typography.Body}px");
+        string Pair(System.Drawing.Color first, System.Drawing.Color second) => $"light-dark({first.ToCss()},{second.ToCss()})";
+        string Color(BorderEdges edge) => Pair(frame.AccentEdges.HasFlag(edge) ? frame.AccentColor ?? light.Accent : light.Border, frame.AccentEdges.HasFlag(edge) ? frame.AccentColor ?? dark.Accent : dark.Border);
+        return FormattableString.Invariant($"background:{Pair(light.Background, dark.Background)};color:{Pair(light.Text, dark.Text)};border-style:{frame.Pattern.ToString().ToLowerInvariant()};border-width:{frame.Thickness.Top}px {frame.Thickness.Right}px {frame.Thickness.Bottom}px {frame.Thickness.Left}px;border-color:{Color(BorderEdges.Top)} {Color(BorderEdges.Right)} {Color(BorderEdges.Bottom)} {Color(BorderEdges.Left)};border-radius:{frame.CornerRadius}px;padding:{theme.Layout.Padding}px;font-family:{theme.Typography.Family};font-size:{theme.Typography.Body}px");
+    }
+
+    /// <summary>Projects paired theme colors into one system scheme while retaining explicitly customized foreground fields.</summary>
+    /// <param name="theme">Captured theme with paired palette colors and explicit-field provenance.</param>
+    /// <param name="light">True selects its light-background and light-accent fields.</param>
+    /// <returns>A concrete palette without scheme pairs, suitable for generating a scoped stylesheet.</returns>
+    static ThemePalette SchemePalette(NotificationTheme theme, bool light)
+    {
+        ThemePalette palette = theme.Palette;
+        var background = (light ? palette.LightBackground : palette.DarkBackground) ?? palette.Background;
+        var accent = (light ? palette.LightAccent : palette.DarkAccent) ?? palette.Accent;
+        bool isLight = UsesDarkText(background);
+        System.Drawing.Color Pick(string lightColor, string darkColor) => System.Drawing.ColorTranslator.FromHtml(isLight ? lightColor : darkColor);
+        bool paired = palette.LightBackground is not null || palette.DarkBackground is not null;
+        bool IsOwned(string field) => theme.ExplicitFields.Contains("Palette." + field);
+        return palette with
+        {
+            Background = background, Accent = accent, LightBackground = null, DarkBackground = null, LightAccent = null, DarkAccent = null,
+            Text = paired && !IsOwned(nameof(palette.Text)) ? Pick("#202020", "#f2f2f2") : palette.Text,
+            Muted = paired && !IsOwned(nameof(palette.Muted)) ? Pick("#636363", "#b4b4b4") : palette.Muted,
+            Surface = paired && !IsOwned(nameof(palette.Surface)) ? Pick("#ffffff", "#242424") : palette.Surface,
+            Border = paired && !IsOwned(nameof(palette.Border)) ? Pick("#d2d2d2", "#414141") : palette.Border,
+            AccentText = paired && !IsOwned(nameof(palette.AccentText)) ? UsesDarkText(accent) ? System.Drawing.ColorTranslator.FromHtml("#171717") : System.Drawing.Color.White : palette.AccentText
+        };
+    }
+
+    /// <summary>Selects dark foreground where its relative-luminance contrast exceeds a white foreground.</summary>
+    /// <param name="color">Background or accent color behind the foreground.</param>
+    /// <returns>True chooses dark text, including on saturated yellow and green surfaces.</returns>
+    static bool UsesDarkText(System.Drawing.Color color)
+    {
+        static double Linear(byte channel) { double value = channel / 255d; return value <= .04045 ? value / 12.92 : Math.Pow((value + .055) / 1.055, 2.4); }
+        return .2126 * Linear(color.R) + .7152 * Linear(color.G) + .0722 * Linear(color.B) > .179;
     }
 
     /// <summary>Resolves a translated enum label using the same localized field keys.</summary>
@@ -211,7 +303,7 @@ internal static class ThemeStyle
         };
         foreach (var pair in entry.Request.Data) values[$"data.{pair.Key}"] = pair.Value;
         foreach (var pair in values) html = html.Replace("{{" + pair.Key + "}}", WebUtility.HtmlEncode(pair.Value), StringComparison.Ordinal);
-        html = html.Replace("{{themeCss}}", Render(ThemeCatalog.For(entry.Request)), StringComparison.Ordinal)
+        html = html.Replace("{{themeCss}}", Render(entry.Current.Resolved?.Theme ?? ThemeCatalog.For(entry.Request)), StringComparison.Ordinal)
             .Replace("{{frameCss}}", CardStyle(entry), StringComparison.Ordinal);
         string sizing = "<script>new ResizeObserver(()=>parent.postMessage({height:document.body.getBoundingClientRect().height},'*')).observe(document.body);</script>";
         int bodyEnd = html.LastIndexOf("</body>", StringComparison.OrdinalIgnoreCase);

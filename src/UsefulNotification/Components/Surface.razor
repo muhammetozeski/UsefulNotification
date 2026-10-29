@@ -2,6 +2,10 @@
 @inject IJSRuntime JavaScript
 @using Windows.Win32
 <style>@((MarkupString)ThemeStyle.Render())</style>
+@if (!Toast)
+{
+    <style>body { zoom: @App.Hub.Configuration.TextScale.ToString(System.Globalization.CultureInfo.InvariantCulture); } .shell { height: calc(100vh / @App.Hub.Configuration.TextScale.ToString(System.Globalization.CultureInfo.InvariantCulture)); width: calc(100vw / @App.Hub.Configuration.TextScale.ToString(System.Globalization.CultureInfo.InvariantCulture)); }</style>
+}
 @if (Toast)
 {
     <style>body { zoom: @ContentScale.ToString(System.Globalization.CultureInfo.InvariantCulture); }</style>
@@ -17,7 +21,7 @@ else if (App.Host.IsPanelVisible)
         </header>
         <div class="workspace">
             <nav class="sidebar" aria-label="@Strings.Navigation">
-                @foreach (PanelSection section in Enum.GetValues<PanelSection>())
+                @foreach (PanelSection section in Enum.GetValues<PanelSection>().Where(section => section != PanelSection.Sounds))
                 {
                     <button class="nav-button" aria-current="@(Section == section ? "page" : null)" @onclick="() => Navigate(section)"><span>@SectionLabel(section)</span>@if (SectionCount(section) is { } count) { <small>@count</small> }</button>
                 }
@@ -36,7 +40,6 @@ else if (App.Host.IsPanelVisible)
                     {
                         <div class="toolbar">
                             <label class="field search-field">@Strings.Search<input type="search" placeholder="@Strings.Search" @bind="Search" @bind:event="oninput" /></label>
-                            <label class="field">@Strings.Level<select @bind="Level"><option value="">@Strings.All</option>@foreach (NotificationLevel level in Enum.GetValues<NotificationLevel>()) { <option value="@level">@ThemeStyle.Label(level)</option> }</select></label>
                             <label class="field">@Strings.Sort<select @bind="Sort">@foreach (SortOrder order in Enum.GetValues<SortOrder>()) { <option value="@order">@ThemeStyle.Label(order)</option> }</select></label>
                         </div>
                         @if (Section != PanelSection.History)
@@ -50,22 +53,26 @@ else if (App.Host.IsPanelVisible)
                                 {
                                     <NotificationCard Entry="entry" Edit="Edit" DeleteRequested="Delete" History="@(Section == PanelSection.History)" ManualOrder="@(Sort == SortOrder.Manual)" @key="entry.Id" />
                                 }
-                                @if (!Filtered.Any()) { <div class="empty"><h2>@(Search.Length > 0 || Level is not null ? Strings.NoMatchingNotifications : EmptyLabel)</h2>@if (Search.Length > 0 || Level is not null) { <button @onclick="ResetFilters">@Strings.ResetFilters</button> }</div> }
+                                @if (!Filtered.Any()) { <div class="empty"><h2>@(Search.Length > 0 ? Strings.NoMatchingNotifications : EmptyLabel)</h2>@if (Search.Length > 0) { <button @onclick="ResetFilters">@Strings.ResetFilters</button> }</div> }
                             </div>
                         </div>
                         @if (Filtered.Count() > AppConstants.Storage.HistoryPageSize) { <footer class="pagination"><button disabled="@(Page == 0)" @onclick="() => Page--">@Strings.HistoryPrevious</button><small>@string.Format(Strings.PageNumber, Page + 1, PageCount)</small><button disabled="@(Page + 1 >= PageCount)" @onclick="() => Page++">@Strings.HistoryNext</button></footer> }
                     }
                 }
+                else if (Section == PanelSection.Themes)
+                {
+                    <div class="content"><ThemeEditor DirtyChanged="value => ThemeDirty = value" EditSounds="() => Navigate(PanelSection.Sounds)" /></div>
+                }
                 else if (Section == PanelSection.Sounds)
                 {
-                    <div class="content"><SoundEditor DirtyChanged="value => SoundDirty = value" /></div>
+                    <div class="content"><div class="actions"><button @onclick="() => Navigate(PanelSection.Themes)">@Strings.BackToThemes</button></div><SoundEditor DirtyChanged="value => SoundDirty = value" /></div>
                 }
                 else
                 {
                     <div class="content settings">
                         <fieldset class="form-section"><legend>@Strings.AppearanceOptions</legend><div class="form-grid">
-                            <label class="field">@Strings.Theme<select @bind="SettingsDraft.Theme">@foreach (var theme in ThemeCatalog.Themes) { <option value="@theme.Name">@theme.Name</option> }</select></label>
                             <label class="field">@Strings.Language<select @bind="SettingsDraft.Language"><option value="@LocManager.SystemLanguage">@Strings.SystemLanguage</option>@foreach (var language in LocManager.Available) { <option value="@language.Code">@language.Name</option> }</select></label>
+                            <label class="field">@Strings.TextScale<select @bind="SettingsDraft.TextScale"><option value="1">100%</option><option value="1.15">115%</option><option value="1.3">130%</option></select></label>
                         </div></fieldset>
                         <fieldset class="form-section"><legend>@Strings.DeliveryOptions</legend><div class="form-grid">
                             <label class="field">@Strings.MaximumVisible<input type="number" min="1" @bind="SettingsDraft.MaximumVisible" /></label>
@@ -95,7 +102,7 @@ else if (App.Host.IsPanelVisible)
 
 @code {
     /// <summary>Selects the panel's active queue, future reminders, completed history, sound editor or application settings.</summary>
-    enum PanelSection { Inbox, Scheduled, History, Sounds, Settings }
+    enum PanelSection { Inbox, Scheduled, History, Themes, Sounds, Settings }
     /// <summary>Selects ordering of the current filtered notification list without changing the stored request.</summary>
     enum SortOrder { Newest, Oldest, Priority, NextDue, Manual }
     /// <summary>Keeps a confirmed operation with the text used by the panel's modal confirmation.</summary>
@@ -110,22 +117,20 @@ else if (App.Host.IsPanelVisible)
     RuntimeSettings SettingsDraft = App.Hub.Configuration with { };
     PanelSection Section;
     SortOrder SelectedSort;
-    NotificationLevel? SelectedLevel;
     string SearchText = string.Empty;
     int Page;
     int PageCount => Math.Max(1, (Filtered.Count() + AppConstants.Storage.HistoryPageSize - 1) / AppConstants.Storage.HistoryPageSize);
     string Search { get => SearchText; set { SearchText = value; Page = 0; } }
-    NotificationLevel? Level { get => SelectedLevel; set { SelectedLevel = value; Page = 0; } }
     SortOrder Sort { get => SelectedSort; set { SelectedSort = value; Page = 0; } }
     bool IsList => Section is PanelSection.Inbox or PanelSection.Scheduled or PanelSection.History;
-    bool EditorDirty, SoundDirty;
-    bool HasChanges => EditorDirty || SoundDirty || Section == PanelSection.Settings && SettingsDraft != App.Hub.Configuration;
+    bool EditorDirty, SoundDirty, ThemeDirty;
+    bool HasChanges => EditorDirty || SoundDirty || ThemeDirty || Section == PanelSection.Settings && SettingsDraft != App.Hub.Configuration;
     string? Error, Status;
     NotificationRequest? Editing;
     PendingConfirmation? Confirmation;
     DotNetObjectReference<Surface>? Reference;
     double ContentScale = 1;
-    IEnumerable<NotificationEntry> Active => Entries.Where(entry => entry.Status == NotificationStatus.Visible || entry.Status == NotificationStatus.Pending && entry.DeliveryStartedAt is not null).OrderByDescending(entry => entry.Request.Priority).ThenBy(entry => entry.Order);
+    IEnumerable<NotificationEntry> Active => Entries.Where(entry => entry.Status == NotificationStatus.Visible || entry.Status == NotificationStatus.Pending && entry.DeliveryStartedAt is not null).OrderByDescending(EffectivePriority).ThenBy(entry => entry.Order);
     IEnumerable<NotificationEntry> Filtered
     {
         get
@@ -137,11 +142,13 @@ else if (App.Host.IsPanelVisible)
                 PanelSection.History => Entries.Where(entry => entry.Result is not null).Select(entry => entry with { Occurrences = entry.Occurrences.Where(item => item.Result is not null).ToList() }),
                 _ => []
             };
-            selected = selected.Where(entry => Level is null || entry.Request.Level == Level).Where(entry => string.IsNullOrWhiteSpace(Search) || $"{entry.Request.Source} {entry.Request.Title} {entry.Request.Message}".Contains(Search, StringComparison.CurrentCultureIgnoreCase));
-            return Sort switch { SortOrder.Oldest => selected.OrderBy(entry => entry.Current.ClosedAt ?? entry.CreatedAt), SortOrder.Priority => selected.OrderByDescending(entry => entry.Request.Priority), SortOrder.NextDue => selected.OrderBy(entry => entry.DueAt), SortOrder.Manual => selected.OrderBy(entry => entry.Order), _ => selected.OrderByDescending(entry => entry.Current.ClosedAt ?? entry.CreatedAt) };
+            selected = selected.Where(entry => string.IsNullOrWhiteSpace(Search) || $"{entry.Request.Source} {entry.Request.Title} {entry.Request.Message}".Contains(Search, StringComparison.CurrentCultureIgnoreCase));
+            return Sort switch { SortOrder.Oldest => selected.OrderBy(entry => entry.Current.ClosedAt ?? entry.CreatedAt), SortOrder.Priority => selected.OrderByDescending(EffectivePriority), SortOrder.NextDue => selected.OrderBy(entry => entry.DueAt), SortOrder.Manual => selected.OrderBy(entry => entry.Order), _ => selected.OrderByDescending(entry => entry.Current.ClosedAt ?? entry.CreatedAt) };
         }
     }
     string EmptyLabel => Section switch { PanelSection.Scheduled => Strings.NoScheduledNotifications, PanelSection.History => Strings.NoHistory, _ => Strings.NoActiveNotifications };
+    /// <summary>Uses the current display's captured priority for queues and list ordering.</summary>
+    static NotificationPriority EffectivePriority(NotificationEntry entry) => entry.Current.Resolved?.Priority ?? entry.Request.Resolved?.Priority ?? entry.Request.Priority ?? NotificationPriority.Normal;
     /// <summary>Counts series in a list section using the same lifecycle categories as its navigation badge.</summary>
     /// <param name="section">Panel destination whose badge is requested.</param>
     /// <returns>Matching series count, or null for destinations without a notification list.</returns>
@@ -149,7 +156,7 @@ else if (App.Host.IsPanelVisible)
     /// <summary>Uses the current language for panel navigation and page headings.</summary>
     /// <param name="section">Destination shown to the user.</param>
     /// <returns>The localized destination name.</returns>
-    static string SectionLabel(PanelSection section) => section switch { PanelSection.Inbox => Strings.Inbox, PanelSection.Scheduled => Strings.Scheduled, PanelSection.History => Strings.History, PanelSection.Sounds => Strings.Sounds, _ => Strings.SettingsTitle };
+    static string SectionLabel(PanelSection section) => section switch { PanelSection.Inbox => Strings.Inbox, PanelSection.Scheduled => Strings.Scheduled, PanelSection.History => Strings.History, PanelSection.Themes => Strings.Themes, PanelSection.Sounds => Strings.Sounds, _ => Strings.SettingsTitle };
 
     /// <summary>Loads the published journal view and subscribes this renderer to journal, language and native-close events.</summary>
     protected override void OnInitialized()
@@ -203,12 +210,12 @@ else if (App.Host.IsPanelVisible)
     void RequestLeave(Action action)
     {
         // Discard only the panel's drafts before executing the requested destination operation.
-        void Leave() { Editing = null; EditorDirty = false; SoundDirty = false; SettingsDraft = App.Hub.Configuration with { }; action(); }
+        void Leave() { Editing = null; EditorDirty = false; SoundDirty = false; ThemeDirty = false; SettingsDraft = App.Hub.Configuration with { }; action(); }
         if (HasChanges) Confirmation = new(Strings.UnsavedChanges, Strings.DiscardChangesQuestion, Strings.DiscardChanges, Leave); else Leave();
     }
     /// <summary>Changes the destination after resolving unsaved drafts and resets section-specific list state.</summary>
     /// <param name="section">Destination to open.</param>
-    void Navigate(PanelSection section) { if (Section == section) return; RequestLeave(() => { Section = section; Editing = null; EditorDirty = false; SoundDirty = false; Page = 0; Error = null; Status = null; SettingsDraft = App.Hub.Configuration with { }; }); }
+    void Navigate(PanelSection section) { if (Section == section) return; RequestLeave(() => { Section = section; Editing = null; EditorDirty = false; SoundDirty = false; ThemeDirty = false; Page = 0; Error = null; Status = null; SettingsDraft = App.Hub.Configuration with { }; }); }
     /// <summary>Hides the panel to the tray after resolving unsaved changes.</summary>
     void ClosePanel() => RequestLeave(() => App.Host.ShowPanel(false));
     /// <summary>Consumes and executes the pending confirmation once through the application's error boundary.</summary>
@@ -217,10 +224,10 @@ else if (App.Host.IsPanelVisible)
     /// <param name="args">Keyboard event from the panel shell.</param>
     void KeyDown(KeyboardEventArgs args) { if (args.Key == "Escape") { if (Confirmation is not null) Confirmation = null; else if (Editing is not null) CancelEdit(); } }
     /// <summary>Clears search and level restrictions and returns the filtered list to its first page.</summary>
-    void ResetFilters() { Search = string.Empty; Level = null; }
+    void ResetFilters() { Search = string.Empty; }
     /// <summary>Opens a detached blank request or an acknowledgement-based quick reminder after resolving existing drafts.</summary>
     /// <param name="delay">Optional duration from now to the first due time; null creates an immediate ordinary notification draft.</param>
-    void NewNotification(TimeSpan? delay = null) => RequestLeave(() => { Editing = delay is { } after ? new() { Schedule = new() { At = DateTimeOffset.Now.Add(after) }, Lifetime = NotificationLifetimes.UntilAcknowledged } : new(); EditorDirty = false; Status = null; Error = null; });
+    void NewNotification(TimeSpan? delay = null) => RequestLeave(() => { Editing = delay is { } after ? new() { Theme = NotificationProtocol.Copy(ThemeCatalog.Get(nameof(NotificationThemes.Reminder))), Schedule = new() { At = DateTimeOffset.Now.Add(after) } } : new(); EditorDirty = false; Status = null; Error = null; });
     /// <summary>Copies the selected request into an independent editor; completed-history edits become new unscheduled sends.</summary>
     /// <param name="entry">Selected retained series or history projection.</param>
     void Edit(NotificationEntry entry) => RequestLeave(() => { Editing = Section == PanelSection.History ? NotificationProtocol.Copy(entry.Request) with { Id = null, Tag = null, Schedule = null } : NotificationProtocol.Copy(entry.Request) with { Id = entry.Id }; EditorDirty = false; });

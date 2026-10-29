@@ -1,0 +1,50 @@
+@using System.Reflection
+@using System.Drawing
+@using System.Globalization
+<div class="form-grid">
+    @foreach (var property in EditableProperties)
+    {
+        var current = property;
+        var effective = Effective.GetType().GetProperty(property.Name)?.GetValue(Effective);
+        var valueType = Nullable.GetUnderlyingType(property.PropertyType.GenericTypeArguments[0]) ?? property.PropertyType.GenericTypeArguments[0];
+        <div class="theme-field" @key="property.Name">
+            <label class="field">@ThemeStyle.Label("ThemeField" + property.Name)
+                @if (valueType == typeof(Color)) { <input type="color" value="@ColorText(effective)" @onchange="args => Change(current, args.Value?.ToString())" /> }
+                else if (valueType.IsEnum) { <select value="@effective" @onchange="args => Change(current, args.Value?.ToString())">@foreach (var option in Enum.GetValues(valueType)) { <option value="@option">@ThemeStyle.Label(option.ToString()!)</option> }</select> }
+                else if (valueType == typeof(bool)) { <input type="checkbox" checked="@(effective is true)" @onchange="args => Change(current, args.Value?.ToString())" /> }
+                else { <input type="@(valueType == typeof(string) ? "text" : "number")" step="any" value="@Convert.ToString(effective, CultureInfo.InvariantCulture)" @onchange="args => Change(current, args.Value?.ToString())" /> }
+            </label>
+            <div class="field-origin"><span>@(property.GetValue(Overrides) is not null ? Strings.Customized : string.Format(Strings.InheritedFrom, Origin(property.Name)))</span>@if (property.GetValue(Overrides) is not null) { <button type="button" @onclick="() => Inherit(current)">@Strings.ReturnToInherited</button> }</div>
+        </div>
+    }
+</div>
+@if (Error is not null) { <p class="error" role="alert">@Error</p> }
+@code {
+    [Parameter, EditorRequired] public object Overrides { get; set; } = null!;
+    [Parameter, EditorRequired] public object Effective { get; set; } = null!;
+    [Parameter] public string Path { get; set; } = string.Empty;
+    [Parameter] public IReadOnlyDictionary<string, string> Origins { get; set; } = new Dictionary<string, string>();
+    [Parameter] public string[]? Fields { get; set; }
+    [Parameter] public EventCallback Changed { get; set; }
+    string? Error;
+    IEnumerable<PropertyInfo> EditableProperties => Overrides.GetType().GetProperties().Where(property => property.CanWrite && property.PropertyType.IsGenericType && property.PropertyType.GetGenericTypeDefinition() == typeof(Change<>) && (Fields is null || Fields.Contains(property.Name)) && IsScalar(property.PropertyType.GenericTypeArguments[0]));
+    /// <summary>Restricts automatic field controls to the scalar theme values with defined input conversion.</summary>
+    static bool IsScalar(Type type) { type = Nullable.GetUnderlyingType(type) ?? type; return type == typeof(Color) || type.IsPrimitive || type == typeof(string) || type.IsEnum || type == typeof(decimal); }
+    /// <summary>Shows which saved ancestor supplied a field omitted by the current draft.</summary>
+    string Origin(string field) => ThemeStyle.Label(Origins.GetValueOrDefault(Path + "." + field) ?? Strings.Base);
+    /// <summary>Formats an effective color for a native HTML color picker.</summary>
+    static string ColorText(object? value) => value is Color color ? $"#{color.R:X2}{color.G:X2}{color.B:X2}" : "#808080";
+    /// <summary>Stores one explicitly edited value without materializing any other inherited fields.</summary>
+    async Task Change(PropertyInfo property, string? text)
+    {
+        try
+        {
+            Type type = Nullable.GetUnderlyingType(property.PropertyType.GenericTypeArguments[0]) ?? property.PropertyType.GenericTypeArguments[0];
+            object? value = type == typeof(Color) ? ColorTranslator.FromHtml(text ?? string.Empty) : type.IsEnum ? Enum.Parse(type, text ?? string.Empty) : Convert.ChangeType(text, type, CultureInfo.InvariantCulture);
+            property.SetValue(Overrides, Activator.CreateInstance(property.PropertyType, value)); Error = null; await Changed.InvokeAsync();
+        }
+        catch (Exception error) when (error is FormatException or ArgumentException or OverflowException) { Error = Strings.InvalidThemeValue; }
+    }
+    /// <summary>Removes only this property's override and lets the parent supply it again.</summary>
+    async Task Inherit(PropertyInfo property) { property.SetValue(Overrides, null); Error = null; await Changed.InvokeAsync(); }
+}

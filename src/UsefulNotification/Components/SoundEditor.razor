@@ -3,10 +3,10 @@
     <fieldset class="form-section" disabled="@Saving">
         <legend>@Strings.SoundPreset</legend>
         <div class="form-grid">
-            <label class="field">@Strings.SoundPreset<select value="@Selected.Id" @onchange="Select">@foreach (var sound in Draft.Sounds) { <option value="@sound.Id">@sound.Name</option> }</select></label>
+            @if (!ThemeOwned) { <label class="field">@Strings.SoundPreset<select value="@Selected.Id" @onchange="Select">@foreach (var sound in Draft.Sounds) { <option value="@sound.Id">@ThemeStyle.Label(sound.Name)</option> }</select></label> }
             <label class="field">@Strings.Name<input @bind="Selected.Name" /></label>
         </div>
-        <div class="actions"><button type="button" @onclick="Add">@Strings.NewSound</button><button type="button" disabled="@CurrentToneInvalid" @onclick="Duplicate">@Strings.Duplicate</button><button type="button" class="danger" disabled="@(Draft.Sounds.Count <= 1)" @onclick="Delete">@Strings.DeleteSound</button></div>
+        @if (!ThemeOwned) { <div class="actions"><button type="button" @onclick="Add">@Strings.NewSound</button><button type="button" disabled="@CurrentToneInvalid" @onclick="Duplicate">@Strings.Duplicate</button><button type="button" class="danger" disabled="@(Draft.Sounds.Count <= 1)" @onclick="Delete">@Strings.DeleteSound</button></div> }
     </fieldset>
     <fieldset class="form-section" disabled="@Saving">
         <legend>@Strings.SoundFile</legend>
@@ -15,6 +15,30 @@
     </fieldset>
     @if (string.IsNullOrWhiteSpace(AudioPath))
     {
+        <fieldset class="form-section" disabled="@Saving"><legend>@Strings.SoundVoice</legend>
+            <label class="check"><input type="checkbox" checked="@(Selected.Synthesis is not null)" @onchange="ToggleSynthesis" />@Strings.SynthesizedSound</label>
+            @if (Selected.Synthesis is { } voice)
+            {
+                <div class="form-grid">
+                    <label class="field">@Strings.Waveform<select value="@WaveformKey" @onchange="ChangeWaveform"><option value="sine">@Strings.SineWave</option><option value="square">@Strings.SquareWave</option><option value="harmonic">@Strings.HarmonicWave</option></select></label>
+                    <label class="field">@Strings.Volume<input type="number" min="0" max="1" step="0.005" @bind="voice.Volume" /></label>
+                    <label class="field">@Strings.Attack<input type="number" min="0" step="any" value="@Number(voice.Envelope.Attack.TotalMilliseconds)" @onchange="args => ChangeEnvelope(nameof(SoundEnvelope.Attack), args)" /></label>
+                    <label class="field">@Strings.Decay<input type="number" min="0" step="any" value="@Number(voice.Envelope.Decay.TotalMilliseconds)" @onchange="args => ChangeEnvelope(nameof(SoundEnvelope.Decay), args)" /></label>
+                    <label class="field">@Strings.Sustain<input type="number" min="0" max="1" step="0.01" @bind="voice.Envelope.Sustain" /></label>
+                    <label class="field">@Strings.Release<input type="number" min="0" step="any" value="@Number(voice.Envelope.Release.TotalMilliseconds)" @onchange="args => ChangeEnvelope(nameof(SoundEnvelope.Release), args)" /></label>
+                    <label class="field">@Strings.DecayCurve<input type="number" min="0.01" step="any" @bind="voice.Envelope.DecayCurve" /></label>
+                </div>
+                @if (voice.Waveform is HarmonicWaveform harmonic)
+                {
+                    @for (int partialIndex = 0; partialIndex < harmonic.Partials.Count; partialIndex++)
+                    {
+                        int current = partialIndex; var partial = harmonic.Partials[current];
+                        <div class="row"><label class="field">@Strings.FrequencyRatio<input type="number" min="0.001" step="any" value="@Number(partial.FrequencyRatio)" @onchange="args => ChangePartial(current, true, args)" /></label><label class="field">@Strings.Amplitude<input type="number" min="0" max="1" step="0.01" value="@Number(partial.Amplitude)" @onchange="args => ChangePartial(current, false, args)" /></label><button type="button" class="danger" @onclick="() => RemovePartial(current)">@Strings.Delete</button></div>
+                    }
+                    <button type="button" @onclick="AddPartial">@Strings.AddPartial</button>
+                }
+            }
+        </fieldset>
         <fieldset class="form-section" disabled="@Saving">
             <legend>@Strings.ToneSequence</legend>
             @for (int index = 0; index < Selected.Steps.Count; index++)
@@ -33,11 +57,15 @@
     }
     @if (Error is not null) { <p class="error" role="alert">@Error</p> }
     @if (Status is not null) { <p class="status" role="status">@Status</p> }
-    <div class="actions"><button type="button" class="primary" disabled="@Saving" @onclick="Save">@(Saving ? Strings.Saving : Strings.Save)</button><button type="button" disabled="@Saving" @onclick="Preview">@(Playing ? Strings.Cancel : Strings.TestSound)</button><button type="button" class="secondary" disabled="@Saving" @onclick="Reset">@Strings.ResetChanges</button></div>
+    <div class="actions"><button type="button" class="primary" disabled="@Saving" @onclick="Save">@(Saving ? Strings.Saving : Strings.Save)</button><button type="button" disabled="@Saving" @onclick="Preview">@(Playing ? Strings.Cancel : Strings.TestSound)</button><button type="button" class="secondary" disabled="@Saving" @onclick="Reset">@Strings.ResetChanges</button>@if (ThemeOwned) { <button type="button" disabled="@Saving" @onclick="() => Canceled.InvokeAsync()">@Strings.Cancel</button> }</div>
 </div>
 
 @code {
     [Parameter] public EventCallback<bool> DirtyChanged { get; set; }
+    [Parameter] public SoundPattern? ThemeSound { get; set; }
+    [Parameter] public EventCallback<SoundPattern> Saved { get; set; }
+    [Parameter] public EventCallback Canceled { get; set; }
+    bool ThemeOwned => ThemeSound is not null;
     /// <summary>Identifies a numeric part of an existing tone.</summary>
     enum ToneField { Frequency, Duration, Pause }
     DesktopPreferences Draft = null!;
@@ -58,7 +86,8 @@
     /// <summary>Rebuilds the draft from committed preferences and discards temporary path edits.</summary>
     void LoadDraft()
     {
-        Draft = NotificationProtocol.Copy(App.Hub.Preferences); Selected = Draft.SelectedSound;
+        Draft = NotificationProtocol.Copy(App.Hub.Preferences); Selected = ThemeSound is { } themeSound ? NotificationProtocol.Copy(themeSound) : Draft.SelectedSound;
+        if (ThemeOwned) { Draft.Sounds = [Selected]; Draft.SelectedSoundId = Selected.Id; }
         AudioPaths.Clear(); InvalidToneFields.Clear(); Error = null; Status = null;
     }
 
@@ -83,7 +112,7 @@
     {
         PreviewCancellation?.Cancel();
         string path = AudioPath;
-        Selected = Selected with { Id = Guid.NewGuid(), Name = Selected.Name + " " + Strings.Duplicate, Steps = [.. Selected.Steps] };
+        Selected = NotificationProtocol.Copy(Selected) with { Id = Guid.NewGuid(), Name = Selected.Name + " " + Strings.Duplicate };
         Draft.Sounds.Add(Selected); AudioPath = path; await MarkDirty();
     }
 
@@ -142,8 +171,8 @@
         else
         {
             sound.AudioFile = null;
-            if (sound.Steps.Count == 0 || sound.Steps.Any(step => !AppConstants.Audio.Frequency.IsValid(step.Frequency) || !AppConstants.Audio.DurationMilliseconds.IsValid(step.Duration.TotalMilliseconds) || !AppConstants.Audio.PauseMilliseconds.IsValid(step.Pause.TotalMilliseconds)))
-            { Error = Strings.InvalidTone; return null; }
+            var validation = RunSafely(() => SoundSynthesis.Validate(sound));
+            if (!validation.Succeeded) { Error = Strings.InvalidTone; return null; }
         }
         return sound;
     }
@@ -172,6 +201,13 @@
         Saving = true; Error = null; Status = null;
         try
         {
+            if (ThemeOwned)
+            {
+                var prepared = RunSafely(() => Prepare(Selected));
+                if (!prepared.Succeeded) Error = Strings.OperationFailed;
+                else if (prepared.Value is { } sound) { await Saved.InvokeAsync(sound); await DirtyChanged.InvokeAsync(false); }
+                return;
+            }
             var result = RunSafely(() =>
             {
                 var candidate = NotificationProtocol.Copy(Draft);
@@ -196,6 +232,29 @@
     Task MarkDirty() { Status = null; return DirtyChanged.InvokeAsync(true); }
     /// <summary>Formats numeric HTML input values independently of the selected display language.</summary>
     static string Number(double value) => value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    string WaveformKey => Selected.Synthesis?.Waveform switch { SquareWaveform => "square", HarmonicWaveform => "harmonic", _ => "sine" };
+    /// <summary>Enables a detached voice or returns the current note sequence to legacy native tones.</summary>
+    async Task ToggleSynthesis(ChangeEventArgs args) { Selected.Synthesis = args.Value is true ? new() : null; await MarkDirty(); }
+    /// <summary>Replaces only oscillator shape while preserving the existing gain envelope and note timing.</summary>
+    async Task ChangeWaveform(ChangeEventArgs args) { if (Selected.Synthesis is not { } voice) return; voice.Waveform = args.Value?.ToString() switch { "square" => new SquareWaveform(), "harmonic" => new HarmonicWaveform { Partials = [new(1, 1), new(2, .2)] }, _ => new SineWaveform() }; await MarkDirty(); }
+    /// <summary>Edits one gain-envelope duration in milliseconds without changing the other voice fields.</summary>
+    async Task ChangeEnvelope(string field, ChangeEventArgs args)
+    {
+        if (Selected.Synthesis is not { } voice || !double.TryParse(args.Value?.ToString(), System.Globalization.CultureInfo.InvariantCulture, out double value) || !double.IsFinite(value) || value < 0 || value > TimeSpan.MaxValue.TotalMilliseconds) { Error = Strings.InvalidSoundVoice; return; }
+        TimeSpan duration = TimeSpan.FromMilliseconds(value);
+        switch (field) { case nameof(SoundEnvelope.Attack): voice.Envelope.Attack = duration; break; case nameof(SoundEnvelope.Decay): voice.Envelope.Decay = duration; break; case nameof(SoundEnvelope.Release): voice.Envelope.Release = duration; break; }
+        Error = null; await MarkDirty();
+    }
+    /// <summary>Changes one harmonic multiplier or amplitude while retaining every other partial.</summary>
+    async Task ChangePartial(int index, bool frequency, ChangeEventArgs args)
+    {
+        if (Selected.Synthesis?.Waveform is not HarmonicWaveform harmonic || !double.TryParse(args.Value?.ToString(), System.Globalization.CultureInfo.InvariantCulture, out double value) || !double.IsFinite(value) || (frequency ? value <= 0 : value < 0 || value > 1)) { Error = Strings.InvalidSoundVoice; return; }
+        var partial = harmonic.Partials[index]; harmonic.Partials[index] = frequency ? partial with { FrequencyRatio = value } : partial with { Amplitude = value }; Error = null; await MarkDirty();
+    }
+    /// <summary>Adds one editable harmonic without replacing an existing voice.</summary>
+    async Task AddPartial() { if (Selected.Synthesis?.Waveform is HarmonicWaveform harmonic) harmonic.Partials.Add(new(harmonic.Partials.Count + 1, .1)); await MarkDirty(); }
+    /// <summary>Removes exactly the selected partial from this sound draft.</summary>
+    async Task RemovePartial(int index) { if (Selected.Synthesis?.Waveform is HarmonicWaveform harmonic) harmonic.Partials.RemoveAt(index); await MarkDirty(); }
     /// <summary>Stops a preview when navigation disposes this editor.</summary>
     public void Dispose() => PreviewCancellation?.Cancel();
 }
