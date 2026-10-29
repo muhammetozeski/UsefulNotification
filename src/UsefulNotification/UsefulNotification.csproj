@@ -6,7 +6,7 @@
   <WindowsPackageType>None</WindowsPackageType><WindowsAppSDKSelfContained>false</WindowsAppSDKSelfContained><SelfContained>false</SelfContained>
   <RuntimeIdentifier>win-x64</RuntimeIdentifier><SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion><TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
   <ApplicationTitle>UsefulNotification</ApplicationTitle><ApplicationId>com.muhammetozeski.usefulnotification</ApplicationId>
-  <ApplicationDisplayVersion>2.1.0</ApplicationDisplayVersion><ApplicationVersion>5</ApplicationVersion>
+  <ApplicationDisplayVersion>3.0.0</ApplicationDisplayVersion><ApplicationVersion>6</ApplicationVersion>
   <ApplicationIcon>../../Assets/app.ico</ApplicationIcon><AllowUnsafeBlocks>true</AllowUnsafeBlocks><PublishTrimmed>false</PublishTrimmed><EnableMsixTooling>true</EnableMsixTooling>
  </PropertyGroup>
  <ItemGroup>
