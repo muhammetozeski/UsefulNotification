@@ -15,6 +15,8 @@ public abstract record NotificationAction
     public string Id { get; set; } = Guid.NewGuid().ToString();
     /// <summary>Optional button caption; null uses the localized default for this action type.</summary>
     public string? Label { get; set; }
+    /// <summary>True presents this declared action as the primary button; array position never assigns prominence.</summary>
+    public bool IsPrimary { get; set; }
     [JsonIgnore] internal virtual bool External => false;
     [JsonIgnore] internal virtual string DefaultLabel => Localization.Strings.Dismiss;
     internal virtual void Validate() { }

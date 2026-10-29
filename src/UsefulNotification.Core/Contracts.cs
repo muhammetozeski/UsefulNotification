@@ -134,23 +134,29 @@ public sealed record NotificationRequest
     public string? Message { get; set; }
     /// <summary>Semantic accent classification. Null resolves the theme default, then the host default.</summary>
     public NotificationLevel? Level { get; set; }
-    /// <summary>Queue precedence. Null becomes Normal when a new request is accepted.</summary>
+    /// <summary>Legacy explicit queue precedence. Null inherits the selected theme and then the normal fallback.</summary>
     public NotificationPriority? Priority { get; set; }
     /// <summary>Optional sender-defined grouping text retained in the journal.</summary>
     public string? Group { get; set; }
     /// <summary>Optional sender-scoped replacement key; an existing notification with the same source and tag is reused.</summary>
     public string? Tag { get; set; }
-    /// <summary>Complete appearance, such as NotificationThemes.Happy; null uses the host selection.</summary>
+    /// <summary>Actual appearance, sound and delivery definition, such as NotificationThemes.Success. Null uses the host notification selection.</summary>
     public NotificationTheme? Theme { get; set; }
+    /// <summary>Partial changes applied after the selected theme and legacy request fields. Omitted members inherit; an explicit null Sound mutes this request.</summary>
+    public NotificationOverrides? Overrides { get; set; }
+    /// <summary>Optional actual interaction policy. Null inherits the selected theme, with action-bearing content using action controls by default.</summary>
+    public NotificationInteraction? Interaction { get; set; }
+    /// <summary>Host-owned detached acceptance snapshot. A sender-supplied value is ignored by the host.</summary>
+    public ResolvedNotification? Resolved { get; set; }
     /// <summary>Optional complete replacements for selected theme sections; null retains the selected theme unchanged.</summary>
     public NotificationAppearance? Appearance { get; set; }
-    /// <summary>Explicit lifetime; null chooses expiry or acknowledgement from the actual content.</summary>
+    /// <summary>Legacy explicit lifetime. Null inherits the theme policy, with content-dependent expiry or acknowledgement when the definition omits its policy.</summary>
     public NotificationLifetime? Lifetime { get; set; }
     /// <summary>True suppresses the display sound; null follows the host sound preference.</summary>
     public bool? Silent { get; set; }
     /// <summary>Optional initial delivery and recurrence. Null makes the initial occurrence eligible immediately.</summary>
     public ScheduleOptions? Schedule { get; set; }
-    /// <summary>Complete sound sequence or file, such as NotificationSounds.Subtle. Null uses the selected host sound; Silent can suppress either.</summary>
+    /// <summary>Legacy explicit complete sound sequence or file. Null inherits the selected theme sound; Overrides.Sound with an explicit null or Silent can mute it.</summary>
     public SoundPattern? Sound { get; set; }
     /// <summary>Optional positive snooze durations. Null uses the host choices; values are durations rather than minute counts.</summary>
     public TimeSpan[]? Snooze { get; set; }
@@ -160,6 +166,8 @@ public sealed record NotificationRequest
     public ProgressContent? Progress { get; set; }
     /// <summary>Optional absolute image URI or local file reference. The host loads the image for the card.</summary>
     public NotificationImage? Image { get; set; }
+    /// <summary>Optional sender icon shown beside Source; the same URI and local-file rules as Image apply.</summary>
+    public NotificationImage? SourceIcon { get; set; }
     /// <summary>Optional reply field; submitted text is returned in the occurrence result.</summary>
     public InputContent? Input { get; set; }
     /// <summary>Selectable items, initially empty. Results return selected item identities rather than labels.</summary>
@@ -258,6 +266,8 @@ public sealed record SoundPattern
     public List<ToneStep> Steps { get; set; } = [];
     /// <summary>Optional host-accessible local audio file. When supplied, playback uses the file instead of Steps.</summary>
     public FileInfo? AudioFile { get; set; }
+    /// <summary>Actual waveform and envelope used to synthesize Steps. Null retains a flat square-wave voice for legacy tone sequences.</summary>
+    public SoundVoice? Synthesis { get; set; }
 }
 /// <summary>Combines hertz, audible duration and following silence.</summary>
 /// <param name="Frequency">Tone frequency in hertz, supported from 37 to 32767.</param>
@@ -297,6 +307,10 @@ public sealed record NotificationUpdate
     public Change<string?>? Tag { get; set; }
     /// <summary>Absent preserves the complete theme object; Change with null selects the host theme.</summary>
     public Change<NotificationTheme?>? Theme { get; set; }
+    /// <summary>Absent preserves the partial theme changes; a supplied null removes the request's complete override patch.</summary>
+    public Change<NotificationOverrides?>? Overrides { get; set; }
+    /// <summary>Absent preserves the interaction policy; a supplied null restores theme and content defaults.</summary>
+    public Change<NotificationInteraction?>? Interaction { get; set; }
     /// <summary>Absent preserves appearance overrides; Change with null removes them.</summary>
     public Change<NotificationAppearance?>? Appearance { get; set; }
     /// <summary>Absent preserves lifetime policy; Change with null restores content-based lifetime selection.</summary>
@@ -305,7 +319,7 @@ public sealed record NotificationUpdate
     public Change<bool?>? Silent { get; set; }
     /// <summary>Absent preserves timing; Change with null removes the schedule and starts an immediate replacement occurrence.</summary>
     public Change<ScheduleOptions?>? Schedule { get; set; }
-    /// <summary>Absent preserves the requested sound; Change with null returns to the selected host sound.</summary>
+    /// <summary>Absent preserves the legacy sound override; Change with null returns to the captured theme sound.</summary>
     public Change<SoundPattern?>? Sound { get; set; }
     /// <summary>Absent preserves snooze choices; Change with null returns to host choices.</summary>
     public Change<TimeSpan[]?>? Snooze { get; set; }
@@ -317,6 +331,8 @@ public sealed record NotificationUpdate
     public Change<ProgressContent?>? ProgressContent { get; set; }
     /// <summary>Absent preserves the image; Change with null removes it.</summary>
     public Change<NotificationImage?>? Image { get; set; }
+    /// <summary>Absent preserves the sender icon; a supplied null removes it.</summary>
+    public Change<NotificationImage?>? SourceIcon { get; set; }
     /// <summary>Absent preserves reply configuration; Change with null removes the input.</summary>
     public Change<InputContent?>? Input { get; set; }
     /// <summary>Absent preserves checklist items; Change with an empty list removes all items.</summary>
@@ -369,6 +385,8 @@ public sealed record NotificationAcceptance(Guid RequestId, Guid OccurrenceId);
 /// <summary>Owns the evidence and result of one display.</summary>
 public sealed record NotificationOccurrence
 {
+    /// <summary>Accepted appearance and delivery snapshot for this display, retained when a later occurrence changes its theme.</summary>
+    public ResolvedNotification? Resolved { get; set; }
     /// <summary>Identity of this display attempt; snooze, recurrence and retry create another occurrence.</summary>
     public Guid Id { get; set; } = Guid.NewGuid();
     /// <summary>Accepted content version used to reject stale render evidence and old interactions.</summary>
@@ -435,6 +453,8 @@ public sealed record NotificationFailure(NotificationError Code, string Message)
 /// <summary>Transfers a typed operation; partial Update and complete Replace are distinct.</summary>
 public sealed record NotificationCommand
 {
+    /// <summary>Requested wire contract. Null identifies legacy version-two callers; the version-three SDK supplies three.</summary>
+    public int? ProtocolVersion { get; set; }
     /// <summary>Requested management operation. Its default enum value sends a new notification.</summary>
     public NotificationOperation Operation { get; set; }
     /// <summary>Complete request for Send or Replace. Null on Send creates a notification using defaults.</summary>
@@ -468,5 +488,5 @@ public sealed record NotificationReceipt
     /// <summary>Independent retained journal data returned by Get or List; null for other operations.</summary>
     public List<NotificationEntry>? Entries { get; set; }
     /// <summary>Host wire contract version, currently 2. The client checks compatibility before interpreting a response.</summary>
-    public int ProtocolVersion { get; set; } = 2;
+    public int ProtocolVersion { get; set; } = 3;
 }

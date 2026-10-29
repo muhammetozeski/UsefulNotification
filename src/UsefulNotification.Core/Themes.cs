@@ -5,25 +5,53 @@ using System.Text.Json.Serialization;
 
 namespace UsefulNotification;
 
-/// <summary>Groups colors, typography, and spacing for built-in and user-defined HTML themes.</summary>
+/// <summary>Bundles HTML appearance, sound and delivery changes with one actual parent definition.</summary>
 public sealed record NotificationTheme
 {
+    /// <summary>Stable identity independent of the editable name. Built-in identities begin with builtin:.</summary>
+    public string Id { get; set; } = "custom:" + Guid.NewGuid().ToString("N");
+    /// <summary>Actual parent definition. Its omitted fields remain live inheritance until a request is accepted.</summary>
+    public NotificationTheme? Parent { get; set; }
+    /// <summary>Only the fields owned by this definition. Clearing a member resumes inheritance from Parent.</summary>
+    public NotificationOverrides Overrides { get; set; } = new();
+    ThemePalette palette = new(); ThemeTypography typography = new(); ThemeLayout layout = new(); NotificationFrame frame = new();
+    internal bool HasPalette, HasTypography, HasLayout, HasFrame;
+    [JsonInclude] internal string[]? ExplicitSections
+    {
+        get => new[] { (nameof(Palette), HasPalette), (nameof(Typography), HasTypography), (nameof(Layout), HasLayout), (nameof(Frame), HasFrame) }.Where(section => section.Item2).Select(section => section.Item1).ToArray();
+        set
+        {
+            if (value is null) return;
+            HasPalette = value.Contains(nameof(Palette)); HasTypography = value.Contains(nameof(Typography)); HasLayout = value.Contains(nameof(Layout)); HasFrame = value.Contains(nameof(Frame));
+        }
+    }
+    [JsonInclude] internal Dictionary<string, string>? CapturedOrigins { get; set; }
+    [JsonInclude] internal HashSet<string> ExplicitFields { get; set; } = [];
+    [JsonInclude] internal bool? CapturedContentLifetime { get; set; }
+    [JsonInclude] internal bool? CapturedContentInteraction { get; set; }
     /// <summary>Rejects missing required sections before a request or file-backed theme reaches rendering.</summary>
     internal void Validate()
     {
         if (Palette is null || Palette.Levels is null || Typography is null || Layout is null || Frame is null || Frame.Thickness is null)
             throw new ArgumentException("A theme requires palette, level colors, typography, layout and frame sections.");
+        if (string.IsNullOrWhiteSpace(Typography.Family) || new[] { Typography.Body, Typography.Small, Typography.Heading, Typography.CardTitle, Typography.NormalWeight, Typography.StrongWeight }.Any(value => value <= 0) ||
+            !double.IsFinite(Typography.LineHeight) || Typography.LineHeight <= 0 || !double.IsFinite(Typography.HeadingLineHeight) || Typography.HeadingLineHeight <= 0)
+            throw new ArgumentException("Theme font sizes, weights and line heights must be positive and the font family must be nonblank.");
+        if (typeof(ThemeLayout).GetProperties().Any(property => (int)property.GetValue(Layout)! < 0) ||
+            new[] { Frame.CornerRadius, Frame.Thickness.Top, Frame.Thickness.Right, Frame.Thickness.Bottom, Frame.Thickness.Left }.Any(value => !double.IsFinite(value) || value < 0) ||
+            !Enum.IsDefined(Frame.Pattern) || (Frame.AccentEdges & ~BorderEdges.All) != 0)
+            throw new ArgumentException("Theme measurements must be finite and nonnegative, with valid border patterns and edges.");
     }
     /// <summary>Editable theme identity used by host files and UI; initially Dark. Requests transfer the complete object rather than resolving this name.</summary>
     public string Name { get; set; } = nameof(NotificationThemes.Dark);
     /// <summary>Complete surface and semantic colors. Initialized independently for a newly constructed theme.</summary>
-    [JsonIgnore(Condition = JsonIgnoreCondition.Never)] public ThemePalette Palette { get; set; } = new();
+    [JsonIgnore(Condition = JsonIgnoreCondition.Never)] public ThemePalette Palette { get => palette; set { palette = value; HasPalette = true; } }
     /// <summary>Font family, text sizes and line metrics used to generate the HTML styles.</summary>
-    [JsonIgnore(Condition = JsonIgnoreCondition.Never)] public ThemeTypography Typography { get; set; } = new();
+    [JsonIgnore(Condition = JsonIgnoreCondition.Never)] public ThemeTypography Typography { get => typography; set { typography = value; HasTypography = true; } }
     /// <summary>Spacing and control dimensions used to generate the HTML styles.</summary>
-    [JsonIgnore(Condition = JsonIgnoreCondition.Never)] public ThemeLayout Layout { get; set; } = new();
+    [JsonIgnore(Condition = JsonIgnoreCondition.Never)] public ThemeLayout Layout { get => layout; set { layout = value; HasLayout = true; } }
     /// <summary>HTML border, corner and accent settings; native Windows chrome stays removed.</summary>
-    [JsonIgnore(Condition = JsonIgnoreCondition.Never)] public NotificationFrame Frame { get; set; } = new();
+    [JsonIgnore(Condition = JsonIgnoreCondition.Never)] public NotificationFrame Frame { get => frame; set { frame = value; HasFrame = true; } }
     /// <summary>Optional default level applied when a new request supplies no Level.</summary>
     public NotificationLevel? DefaultLevel { get; set; }
 }
@@ -99,6 +127,14 @@ public sealed record BorderThickness
 /// <summary>Defines surface and semantic colors; no CSS variable is a second source of truth.</summary>
 public sealed record ThemePalette
 {
+    /// <summary>Optional light-system card background; null uses Background.</summary>
+    public Color? LightBackground { get; set; }
+    /// <summary>Optional dark-system card background; null uses Background.</summary>
+    public Color? DarkBackground { get; set; }
+    /// <summary>Optional light-system accent; null uses Accent.</summary>
+    public Color? LightAccent { get; set; }
+    /// <summary>Optional dark-system accent; null uses Accent.</summary>
+    public Color? DarkAccent { get; set; }
     /// <summary>Modal backdrop color, initially translucent black.</summary>
     public Color Overlay { get; set; } = Color.FromArgb(160, Color.Black);
     /// <summary>Page and card background, initially the dark preset surface.</summary>
@@ -182,119 +218,124 @@ public sealed record ThemeLayout
     /// <summary>Initial multiline reply row count, initially 0.</summary>
     public int ReplyRows { get; set; } = 3;
 }
-/// <summary>Exposes complete mutable theme objects directly to C# callers.</summary>
+/// <summary>Actual inheritable theme definitions bundling appearance, sound and delivery policies.</summary>
 public static class NotificationThemes
 {
-    /// <summary>Mutable dark preset and initial host theme. Send captures its current complete value.</summary>
-    public static NotificationTheme Dark { get; set; } = new();
-    /// <summary>Mutable light-surface preset with dark text.</summary>
-    public static NotificationTheme Light { get; set; } = new() { Name = nameof(Light), Palette = new() { Background = ColorTranslator.FromHtml("#f6f7f9"), Surface = ColorTranslator.FromHtml("#ffffff"), Border = ColorTranslator.FromHtml("#c7ccd4"), Text = ColorTranslator.FromHtml("#20252d"), Muted = ColorTranslator.FromHtml("#606978"), Accent = ColorTranslator.FromHtml("#2563b5") } };
-    /// <summary>Mutable dark preset with a blue accent.</summary>
-    public static NotificationTheme Blue { get; set; } = new() { Name = nameof(Blue) };
-    /// <summary>Mutable dark preset with a success-green accent.</summary>
-    public static NotificationTheme Emerald { get; set; } = new() { Name = nameof(Emerald) };
-    /// <summary>Mutable dark preset with a purple accent.</summary>
-    public static NotificationTheme Purple { get; set; } = new() { Name = nameof(Purple), Palette = new() { Accent = ColorTranslator.FromHtml("#a68ac9") } };
-    /// <summary>Mutable dark preset with a warning-amber accent.</summary>
-    public static NotificationTheme Amber { get; set; } = new() { Name = nameof(Amber) };
-    /// <summary>Mutable dark preset with a red accent.</summary>
-    public static NotificationTheme Crimson { get; set; } = new() { Name = nameof(Crimson), Palette = new() { Accent = ColorTranslator.FromHtml("#dc6571") } };
-    /// <summary>Mutable information preset with a single semantic accent strip.</summary>
-    public static NotificationTheme Info { get; set; } = new() { Name = nameof(Info), DefaultLevel = NotificationLevel.Info, Frame = new() };
-    /// <summary>Mutable warning preset with a single semantic accent strip.</summary>
-    public static NotificationTheme Warn { get; set; } = new() { Name = nameof(Warn), DefaultLevel = NotificationLevel.Warning, Frame = new() };
-    /// <summary>Mutable error preset with a single semantic accent strip.</summary>
-    public static NotificationTheme Error { get; set; } = new() { Name = nameof(Error), DefaultLevel = NotificationLevel.Error, Frame = new() };
-    /// <summary>Mutable success preset with a single semantic accent strip.</summary>
-    public static NotificationTheme Happy { get; set; } = new() { Name = nameof(Happy), DefaultLevel = NotificationLevel.Success, Frame = new() };
-    /// <summary>Mutable black/white preset with a yellow accent.</summary>
-    public static NotificationTheme HighContrast { get; set; } = new() { Name = nameof(HighContrast), Palette = new() { Background = ColorTranslator.FromHtml("#000000"), Surface = ColorTranslator.FromHtml("#000000"), Border = ColorTranslator.FromHtml("#ffffff"), Text = ColorTranslator.FromHtml("#ffffff"), Muted = ColorTranslator.FromHtml("#ffffff"), Accent = ColorTranslator.FromHtml("#ffff00"), AccentText = ColorTranslator.FromHtml("#000000") } };
-    /// <summary>A new list containing the actual shared preset objects. Editing a preset affects later sends; already accepted requests own their snapshots.</summary>
-    public static List<NotificationTheme> All => [Dark, Light, Blue, Emerald, Purple, Amber, Crimson, Info, Warn, Error, Happy, HighContrast];
-
-    /// <summary>Derives preset accents from their complete palette objects.</summary>
-    static NotificationThemes()
+    /// <summary>Root paired light/dark appearance with a gentle bell, eight-second default and click acknowledgement.</summary>
+    public static NotificationTheme Base { get; set; } = new()
     {
-        Emerald.Palette.Accent = Dark.Palette.Levels[NotificationLevel.Success];
-        Amber.Palette.Accent = Dark.Palette.Levels[NotificationLevel.Warning];
-        foreach (var theme in new[] { Info, Warn, Error, Happy })
+        Id = "builtin:base", Name = nameof(Base),
+        Typography = new() { Body = 16, CardTitle = 20 },
+        Frame = new() { Thickness = new() { Left = 1 }, AccentEdges = BorderEdges.None },
+        Overrides = new()
         {
-            theme.Palette.Accent = theme.Palette.Levels[theme.DefaultLevel!.Value]; theme.Frame.AccentColor = theme.Palette.Accent;
-            if (theme != Info) theme.Palette.AccentText = Dark.Palette.Background;
+            Palette = new() { Background = new(Html("#18181b")), Accent = new(Html("#60a5fa")), LightBackground = new(Color.White), DarkBackground = new(Html("#18181b")), LightAccent = new(Html("#315d9c")), DarkAccent = new(Html("#60a5fa")) },
+            Sound = new(NotificationSounds.Subtle), Priority = new(NotificationPriority.Normal)
         }
-    }
+    };
+    /// <summary>Ordinary notification definition inheriting every root field.</summary>
+    public static NotificationTheme Daily { get; set; } = new() { Id = "builtin:daily", Name = nameof(Daily), Parent = Base };
+    /// <summary>Positive paired colors, a gentle two-note sound and six-second lifetime.</summary>
+    public static NotificationTheme Success { get; set; } = new()
+    {
+        Id = "builtin:success", Name = nameof(Success), Parent = Daily,
+        Overrides = new() { Palette = Colors("#e9f5ed", "#193426", "#24734f", "#8ed6ac"), Sound = new(NotificationSounds.Completed), Lifetime = new(new ExpiringLifetime(TimeSpan.FromSeconds(6))) }
+    };
+    /// <summary>Attention colors and clear twin tones, with twelve seconds to read.</summary>
+    public static NotificationTheme Attention { get; set; } = new()
+    {
+        Id = "builtin:attention", Name = nameof(Attention), Parent = Daily,
+        Overrides = new() { Palette = Colors("#fff1d5", "#3b2c13", "#8a580c", "#f1c46f"), Sound = new(NotificationSounds.DoubleAlert), Lifetime = new(new ExpiringLifetime(TimeSpan.FromSeconds(12))) }
+    };
+    /// <summary>Time-sensitive attention child with exactly three flat square beeps, acknowledgement lifetime and high queue priority.</summary>
+    public static NotificationTheme Urgent { get; set; } = new()
+    {
+        Id = "builtin:urgent", Name = nameof(Urgent), Parent = Attention,
+        Overrides = new() { Palette = Colors("#fde5e9", "#511d28", "#b32d40", "#ffb6bf"), Sound = new(NotificationSounds.Attention), Lifetime = new(NotificationLifetimes.UntilAcknowledged), Priority = new(NotificationPriority.High) }
+    };
+    /// <summary>Daily's reminder sibling with warm plucked tones and acknowledgement lifetime.</summary>
+    public static NotificationTheme Reminder { get; set; } = new()
+    {
+        Id = "builtin:reminder", Name = nameof(Reminder), Parent = Daily,
+        Overrides = new() { Palette = Colors("#f0ebf8", "#2b2339", "#75549d", "#c8b4ea"), Sound = new(NotificationSounds.Reminder), Lifetime = new(NotificationLifetimes.UntilAcknowledged) }
+    };
+    /// <summary>Legacy neutral dark appearance retained for callers and the application panel.</summary>
+    public static NotificationTheme Dark { get; set; } = new() { Id = "builtin:dark", Name = nameof(Dark) };
+    /// <summary>Legacy light-surface appearance retained for existing callers.</summary>
+    public static NotificationTheme Light { get; set; } = new() { Id = "builtin:light", Name = nameof(Light), Palette = new() { Background = Html("#f6f7f9"), Surface = Color.White, Border = Html("#c7ccd4"), Text = Html("#20252d"), Muted = Html("#606978"), Accent = Html("#2563b5") } };
+    /// <summary>Legacy alias for the actual Daily definition.</summary>
+    public static NotificationTheme Blue { get => Daily; set => Daily = value; }
+    /// <summary>Legacy alias for the actual Success definition.</summary>
+    public static NotificationTheme Emerald { get => Success; set => Success = value; }
+    /// <summary>Legacy purple appearance retained for existing callers.</summary>
+    public static NotificationTheme Purple { get; set; } = new() { Id = "builtin:purple", Name = nameof(Purple), Palette = new() { Accent = Html("#a68ac9") } };
+    /// <summary>Legacy alias for the actual Attention definition.</summary>
+    public static NotificationTheme Amber { get => Attention; set => Attention = value; }
+    /// <summary>Legacy alias for the actual Urgent definition.</summary>
+    public static NotificationTheme Crimson { get => Urgent; set => Urgent = value; }
+    /// <summary>Legacy alias for the actual Daily definition.</summary>
+    public static NotificationTheme Info { get => Daily; set => Daily = value; }
+    /// <summary>Legacy alias for the actual Attention definition.</summary>
+    public static NotificationTheme Warn { get => Attention; set => Attention = value; }
+    /// <summary>Legacy alias for the actual Urgent definition.</summary>
+    public static NotificationTheme Error { get => Urgent; set => Urgent = value; }
+    /// <summary>Legacy alias for the actual Success definition.</summary>
+    public static NotificationTheme Happy { get => Success; set => Success = value; }
+    /// <summary>Legacy black/white appearance with a yellow accent.</summary>
+    public static NotificationTheme HighContrast { get; set; } = new() { Id = "builtin:highcontrast", Name = nameof(HighContrast), Palette = new() { Background = Color.Black, Surface = Color.Black, Border = Color.White, Text = Color.White, Muted = Color.White, Accent = Color.Yellow, AccentText = Color.Black } };
+    /// <summary>The six useful shared definitions in parent-first order. Existing accepted requests own detached snapshots.</summary>
+    public static List<NotificationTheme> All => [Base, Daily, Success, Attention, Urgent, Reminder];
+    internal static List<NotificationTheme> Legacy => [Dark, Light, Purple, HighContrast];
+    /// <summary>Builds the four independent system-color overrides used by a semantic child.</summary>
+    static ThemePaletteOverrides Colors(string lightBackground, string darkBackground, string lightAccent, string darkAccent) => new()
+    {
+        LightBackground = new(Html(lightBackground)), DarkBackground = new(Html(darkBackground)), LightAccent = new(Html(lightAccent)), DarkAccent = new(Html(darkAccent)),
+        Background = new(Html(darkBackground)), Accent = new(Html(darkAccent))
+    };
+    /// <summary>Converts a built-in hexadecimal color literal.</summary>
+    static Color Html(string color) => ColorTranslator.FromHtml(color);
 }
-/// <summary>Exposes ready-to-use sound sequences without names or numeric preset indexes.</summary>
+/// <summary>Actual synthesized voices and notes; names are labels rather than sound lookup keys.</summary>
 public static class NotificationSounds
 {
-    /// <summary>Mutable three-tone rising chime. The current complete sequence is captured by Send.</summary>
-    public static SoundPattern ChimeUp { get; set; } = new() { Name = nameof(ChimeUp), Steps = [new(900, TimeSpan.FromMilliseconds(160), TimeSpan.FromMilliseconds(60)), new(1200, TimeSpan.FromMilliseconds(160), TimeSpan.FromMilliseconds(60)), new(1500, TimeSpan.FromMilliseconds(300), TimeSpan.Zero)] };
-    /// <summary>Mutable two-tone repeated ping.</summary>
-    public static SoundPattern DualPing { get; set; } = new() { Name = nameof(DualPing), Steps = [new(1050, TimeSpan.FromMilliseconds(150), TimeSpan.FromMilliseconds(100)), new(1050, TimeSpan.FromMilliseconds(150), TimeSpan.Zero)] };
-    /// <summary>Mutable two-tone descending attention signal.</summary>
-    public static SoundPattern HighUrgency { get; set; } = new() { Name = nameof(HighUrgency), Steps = [new(1600, TimeSpan.FromMilliseconds(120), TimeSpan.FromMilliseconds(70)), new(1200, TimeSpan.FromMilliseconds(120), TimeSpan.Zero)] };
-    /// <summary>Mutable single 700-hertz tone lasting 90 milliseconds.</summary>
-    public static SoundPattern Subtle { get; set; } = new() { Name = nameof(Subtle), Steps = [new(700, TimeSpan.FromMilliseconds(90), TimeSpan.Zero)] };
-    /// <summary>A new list containing the actual shared sound objects; use a detached copy when editing a local draft.</summary>
-    public static List<SoundPattern> All => [ChimeUp, DualPing, HighUrgency, Subtle];
-}
-/// <summary>Loads file-backed themes at text boundaries; application code passes theme objects.</summary>
-internal static class ThemeCatalog
-{
-    public static long Revision;
-    public static List<NotificationTheme> Themes = NotificationThemes.All;
-
-    /// <summary>Reads theme JSON files without modifying built-in definitions.</summary>
-    public static void Load()
+    /// <summary>Soft, slowly decaying bell at 1047 hertz and low gain.</summary>
+    public static SoundPattern Subtle { get; set; } = new()
     {
-        string directory = Path.Combine(AppPaths.UserData, AppConstants.Storage.ThemesDirectory);
-        Directory.CreateDirectory(directory);
-        var loaded = NotificationThemes.All;
-        foreach (string path in Directory.EnumerateFiles(directory, "*.json"))
-        {
-            var result = RunSafely(() =>
-            {
-                using var document = JsonDocument.Parse(File.ReadAllText(path));
-                if (document.RootElement.ValueKind != JsonValueKind.Object) throw new JsonException("A theme file must contain a theme object.");
-                var theme = document.RootElement.Deserialize<NotificationTheme>(AppConstants.Json) ?? throw new InvalidDataException(path);
-                ArgumentException.ThrowIfNullOrWhiteSpace(theme.Name);
-                theme.Validate();
-                return theme;
-            });
-            if (result.Succeeded && result.Value is { } theme)
-            {
-                loaded.RemoveAll(item => item.Name.Equals(theme.Name, StringComparison.OrdinalIgnoreCase));
-                loaded.Add(theme);
-            }
-        }
-        Themes = loaded;
-        Interlocked.Increment(ref Revision);
-    }
-
-    /// <summary>Resolves a per-request theme or the selected application theme.</summary>
-    /// <param name="name">Optional request theme name.</param>
-    /// <param name="required">True rejects an unknown name after reloading file-backed themes; false falls back to Dark.</param>
-    /// <returns>A matching theme, falling back to the default dark theme.</returns>
-    public static NotificationTheme Get(string? name = null, bool required = false)
+        Id = new("10000000-0000-0000-0000-000000000001"), Name = nameof(Subtle), Steps = [new(1047, TimeSpan.FromMilliseconds(1250), TimeSpan.Zero)],
+        Synthesis = new() { Volume = .055, Waveform = new HarmonicWaveform { Partials = [new(1, 1), new(2.756, .16), new(5.4, .035)] }, Envelope = new() { Decay = TimeSpan.FromMilliseconds(1250), DecayCurve = 3.5 } }
+    };
+    /// <summary>Gentle positive rising pair at 784 and 1047 hertz.</summary>
+    public static SoundPattern Completed { get; set; } = new()
     {
-        NotificationTheme? selected = Themes.FirstOrDefault(theme => theme.Name.Equals(name ?? Settings.Theme.Value, StringComparison.OrdinalIgnoreCase));
-        if (selected is null && required)
-        {
-            Load();
-            selected = Themes.FirstOrDefault(theme => theme.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
-        }
-        return selected ?? (required ? throw new ArgumentException($"Unknown notification theme: {name}") : NotificationThemes.Dark);
-    }
-
-    /// <summary>Combines a named theme with the sender's optional appearance objects.</summary>
-    /// <param name="request">The notification's display request.</param>
-    /// <returns>The effective complete theme.</returns>
-    public static NotificationTheme For(NotificationRequest request)
+        Id = new("10000000-0000-0000-0000-000000000002"), Name = nameof(Completed), Steps = [new(784, TimeSpan.FromMilliseconds(850), TimeSpan.FromMilliseconds(30)), new(1047, TimeSpan.FromMilliseconds(1050), TimeSpan.Zero)],
+        Synthesis = new() { Volume = .055, Waveform = new HarmonicWaveform { Partials = [new(1, 1), new(2, .12)] }, Envelope = new() { Decay = TimeSpan.FromMilliseconds(1100), DecayCurve = 3 } }
+    };
+    /// <summary>Two warm plucked notes at 523 and 392 hertz.</summary>
+    public static SoundPattern Reminder { get; set; } = new()
     {
-        NotificationTheme theme = request.Theme ?? Get();
-        return request.Appearance is not { } custom ? theme : theme with
-        { Palette = custom.Palette ?? theme.Palette, Typography = custom.Typography ?? theme.Typography, Layout = custom.Layout ?? theme.Layout, Frame = custom.Frame ?? theme.Frame };
-    }
+        Id = new("10000000-0000-0000-0000-000000000003"), Name = nameof(Reminder), Steps = [new(523, TimeSpan.FromMilliseconds(700), TimeSpan.FromMilliseconds(100)), new(392, TimeSpan.FromMilliseconds(800), TimeSpan.Zero)],
+        Synthesis = new() { Volume = .05, Waveform = new HarmonicWaveform { Partials = [new(1, 1), new(2, .3), new(3, .12)] }, Envelope = new() { Decay = TimeSpan.FromMilliseconds(800), DecayCurve = 4 } }
+    };
+    /// <summary>Clear twin tones at 523 hertz separated by eighty milliseconds.</summary>
+    public static SoundPattern DoubleAlert { get; set; } = new()
+    {
+        Id = new("10000000-0000-0000-0000-000000000004"), Name = nameof(DoubleAlert), Steps = [new(523, TimeSpan.FromMilliseconds(320), TimeSpan.FromMilliseconds(80)), new(523, TimeSpan.FromMilliseconds(420), TimeSpan.Zero)],
+        Synthesis = new() { Volume = .085, Waveform = new HarmonicWaveform { Partials = [new(1, 1), new(2, .18)] }, Envelope = new() { Decay = TimeSpan.FromMilliseconds(450), Sustain = .1, DecayCurve = 1.4 } }
+    };
+    /// <summary>Exactly three long 740-hertz, flat square-wave beeps with 320-millisecond gaps.</summary>
+    public static SoundPattern Attention { get; set; } = new()
+    {
+        Id = new("10000000-0000-0000-0000-000000000005"), Name = nameof(Attention), Steps = [new(740, TimeSpan.FromMilliseconds(720), TimeSpan.FromMilliseconds(320)), new(740, TimeSpan.FromMilliseconds(720), TimeSpan.FromMilliseconds(320)), new(740, TimeSpan.FromMilliseconds(880), TimeSpan.Zero)],
+        Synthesis = new() { Volume = .085, Waveform = new SquareWaveform(), Envelope = new() { Attack = TimeSpan.Zero, Decay = TimeSpan.Zero, Release = TimeSpan.Zero, Sustain = 1 } }
+    };
+    /// <summary>Legacy alias for the actual positive two-note sound.</summary>
+    public static SoundPattern ChimeUp { get => Completed; set => Completed = value; }
+    /// <summary>Legacy alias for the actual clear twin-tone sound.</summary>
+    public static SoundPattern DualPing { get => DoubleAlert; set => DoubleAlert = value; }
+    /// <summary>Legacy alias for the actual three-beep urgent sound.</summary>
+    public static SoundPattern HighUrgency { get => Attention; set => Attention = value; }
+    /// <summary>A new list containing the actual five shared sound definitions.</summary>
+    public static List<SoundPattern> All => [Subtle, Completed, Reminder, DoubleAlert, Attention];
 }
 /// <summary>Accepts legacy wire names while preserving full structured themes in requests and journals.</summary>
 internal sealed class NotificationThemeConverter : JsonConverter<NotificationTheme>
@@ -307,7 +348,24 @@ internal sealed class NotificationThemeConverter : JsonConverter<NotificationThe
         : JsonSerializer.Deserialize<NotificationTheme>(ref reader, Structured(options)) ?? throw new JsonException("A theme object is required.");
 
     /// <summary>Writes the full object so sender changes cannot be lost through name lookup.</summary>
-    public override void Write(Utf8JsonWriter writer, NotificationTheme value, JsonSerializerOptions options) => JsonSerializer.Serialize(writer, value, Structured(options));
+    public override void Write(Utf8JsonWriter writer, NotificationTheme value, JsonSerializerOptions options)
+    {
+        writer.WriteStartObject();
+        writer.WriteString("id", value.Id); writer.WriteString("name", value.Name);
+        if (value.Parent is { } parent) { writer.WritePropertyName("parent"); JsonSerializer.Serialize(writer, parent, options); }
+        writer.WritePropertyName("overrides"); JsonSerializer.Serialize(writer, value.Overrides, options);
+        if (value.Parent is null || value.HasPalette) { writer.WritePropertyName("palette"); JsonSerializer.Serialize(writer, value.Palette, options); }
+        if (value.Parent is null || value.HasTypography) { writer.WritePropertyName("typography"); JsonSerializer.Serialize(writer, value.Typography, options); }
+        if (value.Parent is null || value.HasLayout) { writer.WritePropertyName("layout"); JsonSerializer.Serialize(writer, value.Layout, options); }
+        if (value.Parent is null || value.HasFrame) { writer.WritePropertyName("frame"); JsonSerializer.Serialize(writer, value.Frame, options); }
+        if (value.DefaultLevel is { } level) { writer.WritePropertyName("defaultLevel"); JsonSerializer.Serialize(writer, level, options); }
+        if (value.CapturedOrigins is { } origins) { writer.WritePropertyName("capturedOrigins"); JsonSerializer.Serialize(writer, origins, options); }
+        if (value.ExplicitFields.Count > 0) { writer.WritePropertyName("explicitFields"); JsonSerializer.Serialize(writer, value.ExplicitFields, options); }
+        writer.WritePropertyName("explicitSections"); JsonSerializer.Serialize(writer, value.ExplicitSections, options);
+        if (value.CapturedContentLifetime is { } contentLifetime) writer.WriteBoolean("capturedContentLifetime", contentLifetime);
+        if (value.CapturedContentInteraction is { } contentInteraction) writer.WriteBoolean("capturedContentInteraction", contentInteraction);
+        writer.WriteEndObject();
+    }
 
     /// <summary>Reuses serialization options without this boundary converter to avoid recursion.</summary>
     JsonSerializerOptions Structured(JsonSerializerOptions options) => ObjectOptions.GetValue(options, source =>
