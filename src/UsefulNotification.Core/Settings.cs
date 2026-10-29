@@ -32,13 +32,14 @@ internal static class Settings
 {
     public static readonly Setting<string> Language = new("system");
     public static readonly Setting<bool> EnableLogging = new(true);
-    public static Setting<string> Theme = new(NotificationThemes.Dark.Name);
+    public static Setting<string> Theme = new(NotificationThemes.Daily.Name);
     public static Setting<int> MaximumVisible = new(AppConstants.Notifications.MaximumVisible);
     public static Setting<bool> PlaySound = new(true);
     public static Setting<bool> PauseOnHover = new(true);
     public static Setting<bool> GlobalHotkey = new(true);
     public static Setting<bool> StartWithWindows = new(false);
     public static Setting<int> Monitor = new(0);
+    public static Setting<double> TextScale = new(1);
 }
 
 internal interface ISetting

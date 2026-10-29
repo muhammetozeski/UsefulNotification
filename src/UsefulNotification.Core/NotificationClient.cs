@@ -11,8 +11,8 @@ namespace UsefulNotification;
 /// <summary>Owns actual client endpoint, startup, polling and Polly request policies.</summary>
 public sealed record NotificationClientOptions
 {
-    /// <summary>Maximum response-line length in characters, initially 16 Mi characters so retained history can exceed one request. Increase for deliberately larger histories; inbound requests keep the host's separate limit.</summary>
-    public int MaximumResponseCharacters { get; set; } = 16 * 1024 * 1024;
+    /// <summary>Maximum response-line length in characters, initially 32 Mi characters so retained theme/occurrence snapshots can exceed one request. Increase for deliberately larger histories; inbound requests keep the host's separate limit.</summary>
+    public int MaximumResponseCharacters { get; set; } = 32 * 1024 * 1024;
     /// <summary>Optional host executable override. Null discovers the portable host registered by its first launch, then checks beside the client payload.</summary>
     public FileInfo? Application { get; set; }
     /// <summary>True, initially, permits a background host launch after the initial connection times out.</summary>
@@ -67,10 +67,15 @@ public static class NotificationClient
     /// <returns>The operation's acknowledgement, optional query entries, or typed rejection.</returns>
     public static Task<NotificationReceipt> ExecuteAsync(NotificationCommand command, NotificationClientOptions? options = null, CancellationToken cancellationToken = default)
     {
-        string payload = JsonSerializer.Serialize(command, AppConstants.WireJson);
+        string payload = JsonSerializer.Serialize(command with { ProtocolVersion = 3 }, AppConstants.WireJson);
         return ExchangeAsync(payload, command.Operation, options ?? Options, cancellationToken);
     }
-    internal static Task<NotificationReceipt> SendWireAsync(string payload, NotificationOperation operation, CancellationToken cancellationToken = default) => ExchangeAsync(payload, operation, Options, cancellationToken);
+    internal static Task<NotificationReceipt> SendWireAsync(string payload, NotificationOperation operation, CancellationToken cancellationToken = default)
+    {
+        var command = JsonNode.Parse(payload)?.AsObject() ?? throw new JsonException("A command object is required.");
+        command["protocolVersion"] = 3;
+        return ExchangeAsync(command.ToJsonString(AppConstants.WireJson), operation, Options, cancellationToken);
+    }
 
     static async Task<NotificationReceipt> ExchangeAsync(string payload, NotificationOperation operation, NotificationClientOptions source, CancellationToken cancellationToken)
     {
@@ -104,8 +109,8 @@ public static class NotificationClient
                 await NotificationProtocol.WriteLineAsync(pipe, payload, token);
                 string text = await NotificationProtocol.ReadLineAsync(pipe, token, settings.MaximumResponseCharacters);
                 var root = JsonNode.Parse(text) ?? throw new JsonException("An acknowledgement is required.");
-                if (root["protocolVersion"]?.GetValue<int>() != 2)
-                    return new NotificationReceipt { Failure = new(NotificationError.IncompatibleHost, "This client requires UsefulNotification 2 or later.") };
+                if (root["protocolVersion"]?.GetValue<int>() != 3)
+                    return new NotificationReceipt { Failure = new(NotificationError.IncompatibleHost, "This client requires UsefulNotification 3. Update the desktop host and caller SDK together.") };
                 return root.Deserialize<NotificationReceipt>(AppConstants.Json) ?? throw new JsonException("An acknowledgement is required.");
             }, cancellationToken);
         }

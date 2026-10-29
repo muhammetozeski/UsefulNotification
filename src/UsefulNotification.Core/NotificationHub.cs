@@ -33,11 +33,24 @@ internal sealed class NotificationHub : IAsyncDisposable
         Entries = PortableStore.Read(AppConstants.Storage.HistoryFile, new List<NotificationEntry>());
         Preferences = PortableStore.Read(AppConstants.Storage.PreferencesFile, new DesktopPreferences());
         ThemeCatalog.Load();
+        if (Settings.Theme.Value.Equals(nameof(NotificationThemes.Dark), StringComparison.OrdinalIgnoreCase))
+        {
+            Settings.Theme.Value = NotificationThemes.Daily.Name;
+            Configuration = RuntimeSettings.Capture();
+            SettingsManager.SaveSettings(AppConstants.ConfigFileName);
+        }
         Committed = JsonSerializer.Serialize(Entries, AppConstants.WireJson);
         Published = NotificationProtocol.Copy(Entries);
         bool recovered = false;
         foreach (var entry in Entries)
         {
+            if (entry.Request.Resolved is null)
+            {
+                Prepare(entry.Request, validateFiles: false);
+                recovered = true;
+            }
+            foreach (var display in entry.Occurrences)
+                if (display.Resolved is null) { display.Resolved = NotificationProtocol.Copy(entry.Request.Resolved); recovered = true; }
             if (entry.Acceptances.Count == 0)
             {
                 entry.Acceptances.Add(new(entry.Id, entry.AcceptedOccurrenceId ?? entry.Current.Id));
@@ -114,9 +127,7 @@ internal sealed class NotificationHub : IAsyncDisposable
                     request.Source = string.IsNullOrWhiteSpace(request.Source) ? AppConstants.Product.Name : request.Source;
                     request.Title = string.IsNullOrWhiteSpace(request.Title) ? request.Source : request.Title;
                     request.Message = string.IsNullOrWhiteSpace(request.Message) ? Strings.NewNotification : request.Message;
-                    request.Level ??= ThemeCatalog.For(request).DefaultLevel ?? AppConstants.Notifications.Level;
-                    request.Priority ??= NotificationPriority.Normal;
-                    Validate(request);
+                    Prepare(request);
                     if (entry is null)
                     {
                         entry = new() { Id = request.Id ?? Guid.NewGuid(), Request = request, Order = Entries.Count };
@@ -133,6 +144,7 @@ internal sealed class NotificationHub : IAsyncDisposable
                         else if (lifetimeChanged) ApplyLifetime(entry);
                     }
                     entry.Acceptances.Add(new(request.Id ?? entry.Id, entry.Current.Id));
+                    entry.Current.Resolved = NotificationProtocol.Copy(request.Resolved);
                     response = Receipt(entry);
                     break;
                 case NotificationOperation.Update:
@@ -141,18 +153,19 @@ internal sealed class NotificationHub : IAsyncDisposable
                     if (command.OccurrenceId is { } key && entry.Current.Id != key) throw new InvalidOperationException("The display occurrence has changed.");
                     var update = NotificationProtocol.Copy(command.Update ?? throw new ArgumentException("A partial update is required."));
                     var updated = Merge(entry.Request, update);
-                    Validate(updated);
-                    bool resetLifetime = update.Lifetime is not null || !Equals(AppConstants.Notifications.ResolveLifetime(entry.Request), AppConstants.Notifications.ResolveLifetime(updated));
+                    Prepare(updated);
+                    bool resetLifetime = update.Lifetime is not null || update.Overrides?.Value?.Lifetime is not null || !Equals(AppConstants.Notifications.ResolveLifetime(entry.Request), AppConstants.Notifications.ResolveLifetime(updated));
                     entry.Request = updated; entry.Current.ContentRevision++;
                     if (update.Schedule is not null) { FinishForReplacement(entry, completed); Schedule(entry, true); }
                     else if (entry.Current.Result is not null) Schedule(entry, true);
                     if (resetLifetime) ApplyLifetime(entry);
+                    entry.Current.Resolved = NotificationProtocol.Copy(updated.Resolved);
                     response = Receipt(entry);
                     break;
                 case NotificationOperation.Retry:
                     entry = entry ?? throw new KeyNotFoundException("The notification to retry was not found.");
                     FinishForReplacement(entry, completed);
-                    entry.Occurrences.Add(new() { DueAt = DateTimeOffset.Now });
+                    entry.Occurrences.Add(new() { DueAt = DateTimeOffset.Now, Resolved = NotificationProtocol.Copy(entry.Request.Resolved) });
                     response = Receipt(entry);
                     break;
                 case NotificationOperation.Dismiss:
@@ -210,7 +223,7 @@ internal sealed class NotificationHub : IAsyncDisposable
             }
             int active = Entries.Count(item => item.Current.Result is null && (item.Status == NotificationStatus.Visible || item.DeliveryStartedAt is not null));
             foreach (var entry in Entries.Where(item => item.Status == NotificationStatus.Pending && item.DeliveryStartedAt is null && item.Current.Action is null)
-                .OrderByDescending(item => item.Request.Priority).ThenBy(item => item.Order).Take(Math.Max(0, Configuration.MaximumVisible - active)))
+                .OrderByDescending(item => item.Request.Resolved?.Priority ?? NotificationPriority.Normal).ThenBy(item => item.Order).Take(Math.Max(0, Configuration.MaximumVisible - active)))
             { entry.Current.DeliveryStartedAt = now; changed = true; }
             if (changed) Persist();
         }
@@ -242,7 +255,7 @@ internal sealed class NotificationHub : IAsyncDisposable
             if (changed) Persist();
         }
         if (changed) Changed?.Invoke();
-        foreach (Guid id in sounds) if (Published.FirstOrDefault(item => item.Id == id) is { } entry && entry.Request.Silent != true && Configuration.PlaySound) SoundRequested?.Invoke(entry);
+        foreach (Guid id in sounds) if (Published.FirstOrDefault(item => item.Id == id) is { } entry && entry.Request.Resolved?.Sound is not null && Configuration.PlaySound) SoundRequested?.Invoke(entry);
     }
 
     /// <summary>Owns a user interaction through completion so shutdown waits for an accepted external action.</summary>
@@ -350,7 +363,7 @@ internal sealed class NotificationHub : IAsyncDisposable
         var result = new NotificationResult { Id = entry.Id, OccurrenceId = occurrence.Id, Status = status, ActionId = actionId, Reply = reply, CheckedItems = checkedItems ?? [], Action = action };
         occurrence.Result = result; occurrence.Status = status; occurrence.Action = action; occurrence.PendingResult = null;
         occurrence.ClosedAt = result.At; occurrence.ExpiresAt = null; occurrence.PausedAt = null; Hovered.Remove(entry.Id);
-        if (nextDue is { } due) entry.Occurrences.Add(new() { Status = status == NotificationStatus.Snoozed ? NotificationStatus.Snoozed : NotificationStatus.Scheduled, DueAt = due });
+        if (nextDue is { } due) entry.Occurrences.Add(new() { Status = status == NotificationStatus.Snoozed ? NotificationStatus.Snoozed : NotificationStatus.Scheduled, DueAt = due, Resolved = NotificationProtocol.Copy(entry.Request.Resolved) });
         return result;
     }
 
@@ -368,6 +381,7 @@ internal sealed class NotificationHub : IAsyncDisposable
         entry.SeriesAnchor = due;
         if (next) entry.Occurrences.Add(new());
         entry.Current.DueAt = due; entry.Current.Status = due > DateTimeOffset.Now ? NotificationStatus.Scheduled : NotificationStatus.Pending;
+        entry.Current.Resolved = NotificationProtocol.Copy(entry.Request.Resolved);
     }
 
     static NotificationRequest Merge(NotificationRequest old, NotificationUpdate change)
@@ -385,7 +399,11 @@ internal sealed class NotificationHub : IAsyncDisposable
             Input = change.Input is { } input ? input.Value : old.Input, Checklist = change.Checklist is { } checklist ? checklist.Value : old.Checklist,
             Template = change.Template is { } template ? template.Value : old.Template, Data = change.Data is { } data ? data.Value : old.Data,
             CallbackPipe = change.CallbackPipe is { } callback ? callback.Value : old.CallbackPipe,
-            Progress = change.ProgressContent is { } content ? content.Value : old.Progress
+            Progress = change.ProgressContent is { } content ? content.Value : old.Progress,
+            Overrides = change.Overrides is { } overrides ? overrides.Value is null ? null : MergeOverrides(old.Overrides, overrides.Value) : old.Overrides,
+            Interaction = change.Interaction is { } interaction ? interaction.Value : old.Interaction,
+            SourceIcon = change.SourceIcon is { } sourceIcon ? sourceIcon.Value : old.SourceIcon,
+            Resolved = null
         };
         if (change.Progress is { } update)
         {
@@ -394,7 +412,37 @@ internal sealed class NotificationHub : IAsyncDisposable
         }
         return request;
     }
-    static void Validate(NotificationRequest request)
+    /// <summary>Merges override containers while treating each supplied Change as one complete value, including null and empty collections.</summary>
+    /// <param name="old">Previous per-send changes, or null.</param>
+    /// <param name="patch">New supplied fields; missing fields retain their preceding changes.</param>
+    /// <returns>A detached combined override object.</returns>
+    static NotificationOverrides MergeOverrides(NotificationOverrides? old, NotificationOverrides patch)
+    {
+        object MergeObject(object? original, object changed, Type type)
+        {
+            object result = original is null ? Activator.CreateInstance(type)! : JsonSerializer.Deserialize(JsonSerializer.Serialize(original, type, AppConstants.WireJson), type, AppConstants.Json)!;
+            foreach (var property in type.GetProperties())
+                if (property.GetValue(changed) is { } supplied)
+                    property.SetValue(result, property.PropertyType.IsGenericType && property.PropertyType.GetGenericTypeDefinition() == typeof(Change<>)
+                        ? supplied : MergeObject(property.GetValue(result), supplied, property.PropertyType));
+            return result;
+        }
+        return (NotificationOverrides)MergeObject(old, patch, typeof(NotificationOverrides));
+    }
+
+    /// <summary>Captures a selected definition before applying per-send changes and validating the accepted snapshot.</summary>
+    /// <param name="request">Detached request owned by the accepting operation.</param>
+    /// <param name="validateFiles">False keeps historical records usable after external image/template files disappear.</param>
+    static void Prepare(NotificationRequest request, bool validateFiles = true)
+    {
+        if (request.Actions is null || request.Checklist is null || request.Data is null) throw new ArgumentException("Actions, checklist and data collections cannot be null.");
+        request.Resolved = null;
+        request.Theme = ThemeResolver.CaptureTheme(request.Theme ?? ThemeCatalog.Get());
+        request.Resolved = ThemeResolver.Resolve(request);
+        Validate(request, validateFiles);
+    }
+
+    static void Validate(NotificationRequest request, bool validateFiles = true)
     {
         if (request.Actions is null || request.Checklist is null || request.Data is null) throw new ArgumentException("Actions, checklist and data collections cannot be null.");
         if (request.Actions.Any(action => action is null || string.IsNullOrWhiteSpace(action.Id))) throw new ArgumentException("Actions must have usable identities.");
@@ -409,8 +457,10 @@ internal sealed class NotificationHub : IAsyncDisposable
         if (request.Snooze?.Any(delay => delay <= TimeSpan.Zero) == true) throw new ArgumentException("Snooze choices must be positive.");
         foreach (var action in request.Actions) action.Validate();
         if (request.Actions.Select(action => action.Id).Distinct().Count() != request.Actions.Count) throw new ArgumentException("Action ids must be unique.");
-        if (request.Template?.File is { } file && !file.Exists) throw new FileNotFoundException("The HTML template was not found.", file.FullName);
-        if (request.Image is { } image && (image.Source is null || !image.Source.IsAbsoluteUri || !AppConstants.RenderMemory.ImageSchemes.Contains(image.Source.Scheme) || image.Source.IsFile && !File.Exists(image.Source.LocalPath))) throw new ArgumentException("The image source is unavailable or unsupported.");
+        if (request.Actions.Count(action => action.IsPrimary) > 1) throw new ArgumentException("Declare at most one primary action.");
+        if (validateFiles && request.Template?.File is { } file && !file.Exists) throw new FileNotFoundException("The HTML template was not found.", file.FullName);
+        foreach (var image in new[] { request.Image, request.SourceIcon }.OfType<NotificationImage>())
+            if (image.Source is null || !image.Source.IsAbsoluteUri || !AppConstants.RenderMemory.ImageSchemes.Contains(image.Source.Scheme) || validateFiles && image.Source.IsFile && !File.Exists(image.Source.LocalPath)) throw new ArgumentException("The image source is unavailable or unsupported.");
     }
 
     public void SavePreferences(DesktopPreferences? preferences = null)
@@ -419,7 +469,8 @@ internal sealed class NotificationHub : IAsyncDisposable
         {
             var candidate = NotificationProtocol.Copy(preferences ?? Preferences);
             if (preferences is not null) candidate.PanelBounds = Preferences.PanelBounds;
-            if (candidate.Sounds.Count == 0 || candidate.Sounds.Any(sound => sound.Steps.Any(step => !AppConstants.Audio.Frequency.IsValid(step.Frequency) || !AppConstants.Audio.DurationMilliseconds.IsValid(step.Duration.TotalMilliseconds) || !AppConstants.Audio.PauseMilliseconds.IsValid(step.Pause.TotalMilliseconds)))) throw new ArgumentException("Invalid sound preset.");
+            if (candidate.Sounds.Count == 0) throw new ArgumentException("At least one sound preset is required.");
+            foreach (var sound in candidate.Sounds) SoundSynthesis.Validate(sound);
             PortableStore.Write(AppConstants.Storage.PreferencesFile, candidate); Preferences = candidate;
         }
     }
@@ -500,6 +551,7 @@ internal sealed class NotificationHub : IAsyncDisposable
                 {
                     string payload = await NotificationProtocol.ReadLineAsync(pipe, budget.Token);
                     command = NotificationProtocol.ReadCommand(payload);
+                    if (command.ProtocolVersion is not (null or 2 or 3)) throw new ArgumentException("The requested wire contract is unsupported.");
                     if (command.Operation == NotificationOperation.Send && string.IsNullOrWhiteSpace(command.Notification?.Source) && OperatingSystem.IsWindowsVersionAtLeast(10) && PInvoke.GetNamedPipeClientProcessId(pipe.SafePipeHandle, out uint senderId))
                     {
                         using var sender = Process.GetProcessById((int)senderId); command.Notification = (command.Notification ?? new()) with { Source = sender.ProcessName };
@@ -511,6 +563,7 @@ internal sealed class NotificationHub : IAsyncDisposable
                     Log(error, PrintToConsole: false, isRun: IsLogEnabled);
                     response = new() { Failure = new(error is KeyNotFoundException ? NotificationError.NotFound : error is IOException ? NotificationError.StorageFailure : error is ArgumentException or JsonException ? NotificationError.InvalidRequest : NotificationError.OperationFailed, error.Message) };
                 }
+                response.ProtocolVersion = command?.ProtocolVersion is null or 2 ? 2 : 3;
                 await NotificationProtocol.WriteLineAsync(pipe, NotificationProtocol.WriteResponse(response), budget.Token);
                 if (response.Accepted && command?.Operation == NotificationOperation.Shutdown) ShutdownRequested?.Invoke();
             }

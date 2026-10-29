@@ -47,6 +47,7 @@ internal static class NotificationProtocol
         bool update = command["operation"]?.GetValue<string>().Equals("update", StringComparison.OrdinalIgnoreCase) == true;
         if (command["notification"] is JsonObject request)
         {
+            request.Remove("resolved");
             NormalizeRequest(request, update);
             if (update && command["update"] is null) { command["update"] = request.DeepClone(); command.Remove("notification"); }
         }
@@ -96,6 +97,7 @@ internal static class NotificationProtocol
     {
         if (request["theme"] is JsonValue theme && theme.TryGetValue<string>(out string? name))
             request["theme"] = JsonSerializer.SerializeToNode(ThemeCatalog.Get(name, required: true), AppConstants.Json);
+        if (request["theme"] is JsonObject definition) NormalizeTheme(definition);
         string? kind = request["kind"]?.GetValue<string>();
         if (request["lifetime"] is null && (request.ContainsKey("sticky") || request.ContainsKey("duration")))
             request["lifetime"] = request["sticky"]?.GetValue<bool>() == true || request["duration"]?.GetValue<string>() == TimeSpan.Zero.ToString()
@@ -140,6 +142,15 @@ internal static class NotificationProtocol
                     action["startInfo"] = new JsonObject { ["fileName"] = action["target"]?.DeepClone(), ["arguments"] = "", ["argumentList"] = action["arguments"]?.DeepClone() ?? new JsonArray(), ["workingDirectory"] = AppPaths.Root };
             }
         request.Remove("kind"); request.Remove("sticky"); request.Remove("duration");
+    }
+
+    /// <summary>Resolves text-only parent references before ordinary theme-object deserialization.</summary>
+    /// <param name="definition">An inline theme definition containing an optional parent ID or name.</param>
+    static void NormalizeTheme(JsonObject definition)
+    {
+        if (definition["parent"] is JsonValue reference && reference.TryGetValue<string>(out string? identity))
+            definition["parent"] = JsonSerializer.SerializeToNode(ThemeCatalog.Get(identity, required: true), AppConstants.Json);
+        else if (definition["parent"] is JsonObject parent) NormalizeTheme(parent);
     }
 }
 

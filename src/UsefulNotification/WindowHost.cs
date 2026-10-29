@@ -13,6 +13,9 @@ using Windows.Win32.UI.WindowsAndMessaging;
 using MauiWindow = Microsoft.Maui.Controls.Window;
 using NativeWindow = Microsoft.UI.Xaml.Window;
 using Microsoft.Win32;
+using System.Collections.Concurrent;
+using System.Text.Json;
+using Windows.Storage.Streams;
 
 namespace UsefulNotification.Desktop;
 
@@ -26,6 +29,8 @@ internal sealed class WindowHost
     TaskbarIcon? Tray;
     SUBCLASSPROC? WindowProcedure;
     readonly SemaphoreSlim SoundGate = new(1);
+    readonly ConcurrentDictionary<string, byte[]> SoundCache = new();
+    readonly Dictionary<Guid, CancellationTokenSource> NotificationSoundsPlaying = [];
     bool Exiting;
     bool PanelWanted = !Environment.GetCommandLineArgs().Contains(AppConstants.Product.BackgroundArgument);
     bool ToastPrepared;
@@ -64,7 +69,7 @@ internal sealed class WindowHost
     }
     /// <summary>CSS zoom factor compensating the toast monitor's DPI when the configured size uses physical pixels.</summary>
     public double ToastContentScale => AppConstants.Windows.ToastSizing == DisplaySizing.PhysicalPixels && Toast is not null
-        ? PInvoke.USER_DEFAULT_SCREEN_DPI / (double)PInvoke.GetDpiForWindow(Handle(Toast)) : 1;
+        ? App.Hub.Configuration.TextScale * PInvoke.USER_DEFAULT_SCREEN_DPI / PInvoke.GetDpiForWindow(Handle(Toast)) : App.Hub.Configuration.TextScale;
 
     /// <summary>Defines the native frame styles removed before HTML is allowed on screen.</summary>
     sealed class NativeAppearance
@@ -112,7 +117,7 @@ internal sealed class WindowHost
         App.Hub.PanelRequested += () => MainThread.BeginInvokeOnMainThread(() => ShowPanel());
         App.Hub.ShutdownRequested += () => MainThread.BeginInvokeOnMainThread(Exit);
         App.Hub.SettingsReloaded += () => MainThread.BeginInvokeOnMainThread(() => RunSafely(() => { InstallHotkey(); ApplyStartup(); }));
-        App.Hub.SoundRequested += entry => App.Hub.RunBackground(token => PlaySoundAsync(entry.Request.Sound, token));
+        App.Hub.SoundRequested += entry => App.Hub.RunBackground(token => PlaySoundAsync(entry.Request.Resolved?.Sound, token, entry.Current.Id));
         App.Hub.DeliveryIssue += entry =>
         {
             Log($"Delivery not confirmed; id={entry.Id}; source={entry.Request.Source}", PrintToConsole: false, isRun: IsLogEnabled);
@@ -120,6 +125,10 @@ internal sealed class WindowHost
         };
         RunSafely(HostDiscovery.Register);
         App.Hub.Start();
+        App.Hub.RunBackground(token => Task.Run(() =>
+        {
+            foreach (var sound in NotificationSounds.All) { token.ThrowIfCancellationRequested(); PrepareSound(sound); }
+        }, token));
         MauiWindow toast = App.CreateSurface(true);
         toast.Created += (_, _) =>
         {
@@ -154,8 +163,15 @@ internal sealed class WindowHost
     /// <summary>Restacks the active notifications on the selected monitor.</summary>
     public void Refresh()
     {
+        var snapshot = App.Hub.Snapshot();
+        var audible = snapshot.Where(entry => App.Hub.Configuration.PlaySound && entry.Request.Resolved?.Sound is not null && entry.Current.Result is null && entry.Current.Action is null).Select(entry => entry.Current.Id).ToHashSet();
+        lock (NotificationSoundsPlaying)
+        {
+            var completedSounds = NotificationSoundsPlaying.Where(item => !audible.Contains(item.Key)).Select(item => item.Value).ToArray();
+            foreach (var sound in completedSounds) sound.Cancel();
+        }
         if (Toast is null) return;
-        var active = App.Hub.Snapshot().Where(item => item.Status == NotificationStatus.Visible || item.Status == NotificationStatus.Pending && item.DeliveryStartedAt is not null).ToArray();
+        var active = snapshot.Where(item => item.Status == NotificationStatus.Visible || item.Status == NotificationStatus.Pending && item.DeliveryStartedAt is not null).ToArray();
         if (active.Length == 0) { Toast.AppWindow.Hide(); return; }
         if (!ToastPrepared || !RenderedCards.SetEquals(active.Select(entry => entry.Id))) return;
         nint extended = PInvoke.GetWindowLongPtr(Handle(Toast), WINDOW_LONG_PTR_INDEX.GWL_EXSTYLE);
@@ -269,53 +285,77 @@ internal sealed class WindowHost
         Panel.AppWindow.MoveAndResize(new(Math.Clamp(saved?.X ?? work.X + (work.Width - width) / 2, work.X, work.X + work.Width - width), Math.Clamp(saved?.Y ?? work.Y + (work.Height - height) / 2, work.Y, work.Y + work.Height - height), width, height));
     }
 
-    /// <summary>Plays a local audio file or tone sequence, with a system-sound fallback after an actual failure.</summary>
+    /// <summary>Prepares bounded resident PCM data for a complete sound definition.</summary>
+    /// <param name="pattern">Captured synthesis, notes and envelope configuration.</param>
+    /// <returns>Reusable WAV bytes; no cache file is written.</returns>
+    byte[] PrepareSound(SoundPattern pattern)
+    {
+        string key = JsonSerializer.Serialize(pattern, AppConstants.WireJson);
+        if (SoundCache.TryGetValue(key, out var prepared)) return prepared;
+        prepared = SoundSynthesis.RenderWav(pattern);
+        if (SoundCache.Count >= AppConstants.Audio.SynthesizedCacheCapacity || SoundCache.Values.Sum(data => data.Length) + prepared.Length > AppConstants.Audio.SynthesizedCacheByteCapacity) SoundCache.Clear();
+        if (prepared.Length <= AppConstants.Audio.SynthesizedCacheByteCapacity) SoundCache.TryAdd(key, prepared);
+        return prepared;
+    }
+
+    /// <summary>Plays local audio or cached synthesized PCM; completing the associated occurrence cancels it.</summary>
     /// <param name="pattern">Optional sequence; null resolves the user's selected sound.</param>
     /// <param name="cancellationToken">Cancels waiting or playback together with the broker's shutdown token.</param>
+    /// <param name="occurrenceId">Optional displayed occurrence owning playback; null is an independent editor preview.</param>
     /// <returns>The complete sound operation.</returns>
-    public async Task PlaySoundAsync(SoundPattern? pattern = null, CancellationToken cancellationToken = default)
+    public async Task PlaySoundAsync(SoundPattern? pattern = null, CancellationToken cancellationToken = default, Guid? occurrenceId = null)
     {
         using var stopping = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, App.Hub.Lifetime);
-        await RunSafelyAsync(async token =>
+        if (occurrenceId is { } soundOwner)
         {
-            await SoundGate.WaitAsync(token);
-            try
+            lock (NotificationSoundsPlaying) NotificationSoundsPlaying[soundOwner] = stopping;
+            if (!App.Hub.Snapshot().Any(entry => entry.Current.Id == soundOwner && entry.Current.Result is null && entry.Current.Action is null)) stopping.Cancel();
+        }
+        try
+        {
+            await RunSafelyAsync(async token =>
             {
-                pattern = NotificationProtocol.Copy(pattern ?? App.Hub.Preferences.SelectedSound ?? AppConstants.Notifications.Sound);
+                await SoundGate.WaitAsync(token);
                 try
                 {
-                    if (pattern.AudioFile is { } audio)
+                    pattern = NotificationProtocol.Copy(pattern ?? AppConstants.Notifications.Sound);
+                    try
                     {
+                        using var stream = new InMemoryRandomAccessStream();
                         using var player = new MediaPlayer();
                         var ended = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                         player.MediaEnded += (_, _) => ended.TrySetResult();
                         player.MediaFailed += (_, args) => ended.TrySetException(new IOException(args.ErrorMessage));
-                        player.Source = MediaSource.CreateFromUri(new Uri(audio.FullName));
+                        if (pattern.AudioFile is { } audio) player.Source = MediaSource.CreateFromUri(new Uri(audio.FullName));
+                        else
+                        {
+                            byte[] data = PrepareSound(pattern);
+                            token.ThrowIfCancellationRequested();
+                            using var writer = new DataWriter(stream);
+                            writer.WriteBytes(data);
+                            await writer.StoreAsync().AsTask(token);
+                            writer.DetachStream(); stream.Seek(0);
+                            player.Source = MediaSource.CreateFromStream(stream, "audio/wav");
+                        }
+                        Log($"Sound playback; name={pattern.Name}; synthesized={pattern.AudioFile is null}; occurrence={occurrenceId}", isRun: IsLogEnabled);
                         player.Play();
                         await ended.Task.WaitAsync(token);
                     }
-                    else
-                        foreach (ToneStep step in pattern.Steps)
-                        {
-                            token.ThrowIfCancellationRequested();
-                            for (TimeSpan remaining = step.Duration; remaining > TimeSpan.Zero;)
-                            {
-                                token.ThrowIfCancellationRequested();
-                                var slice = remaining < AppConstants.Audio.PlaybackSlice ? remaining : AppConstants.Audio.PlaybackSlice;
-                                await Task.Run(() => { if (!PInvoke.Beep((uint)step.Frequency, (uint)slice.TotalMilliseconds)) throw new System.ComponentModel.Win32Exception(); }, token);
-                                remaining -= slice;
-                            }
-                            await Task.Delay(step.Pause, token);
-                        }
+                    catch (Exception error) when (error is not OperationCanceledException)
+                    {
+                        Log(error, PrintToConsole: false, isRun: IsLogEnabled);
+                        if (!PInvoke.MessageBeep(MESSAGEBOX_STYLE.MB_OK)) throw new System.ComponentModel.Win32Exception();
+                    }
                 }
-                catch (Exception error) when (error is not OperationCanceledException)
-                {
-                    Log(error, PrintToConsole: false, isRun: IsLogEnabled);
-                    if (!PInvoke.MessageBeep(MESSAGEBOX_STYLE.MB_OK)) throw new System.ComponentModel.Win32Exception();
-                }
-            }
-            finally { SoundGate.Release(); }
-        }, stopping.Token);
+                finally { SoundGate.Release(); }
+            }, stopping.Token);
+        }
+        finally
+        {
+            if (occurrenceId is { } finishedOwner)
+                lock (NotificationSoundsPlaying)
+                    if (NotificationSoundsPlaying.GetValueOrDefault(finishedOwner) == stopping) NotificationSoundsPlaying.Remove(finishedOwner);
+        }
     }
 
     /// <summary>Stops the listener, saves placement, removes the tray icon, and closes the process.</summary>

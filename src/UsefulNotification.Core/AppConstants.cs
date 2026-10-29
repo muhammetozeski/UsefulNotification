@@ -86,7 +86,7 @@ internal sealed class HostRegistrationOptions
 internal sealed class NotificationDefaults
 {
     /// <summary>Resolves a sender lifetime or the content-dependent default used for actual delivery and updates.</summary>
-    public NotificationLifetime ResolveLifetime(NotificationRequest request) => request.Lifetime ??
+    public NotificationLifetime ResolveLifetime(NotificationRequest request) => request.Resolved?.Lifetime ?? request.Lifetime ??
         (request.Schedule is not null || request.Input is not null || request.Actions.Count > 0 || request.Checklist.Count > 0 || request.Progress is { } progress && (progress.Value is null || progress.Value < progress.Maximum)
             ? NotificationLifetimes.UntilAcknowledged : NotificationLifetimes.Default);
     /// <summary>Resolves a notification's own snooze choices or the shared fallback choices.</summary>
@@ -107,8 +107,8 @@ internal sealed class WindowOptions
 {
     public HotkeyOptions Hotkey { get; set; } = new();
     public System.Drawing.Size Panel { get; set; } = new(860, 720);
-    public System.Drawing.Size Toast { get; set; } = new(392, 160);
-    public DisplaySizing ToastSizing { get; set; } = DisplaySizing.PhysicalPixels;
+    public System.Drawing.Size Toast { get; set; } = new(410, 160);
+    public DisplaySizing ToastSizing { get; set; } = DisplaySizing.DeviceIndependent;
     public System.Drawing.Size MinimumPanel { get; set; } = new(620, 460);
     public int ScreenMargin { get; set; } = 16;
     public int CardGap { get; set; } = 8;
@@ -116,6 +116,8 @@ internal sealed class WindowOptions
 /// <summary>Shares Windows tone constraints and interruptible playback slices between editors, validation and native audio.</summary>
 internal sealed class AudioPolicy
 {
+    public int SynthesizedCacheCapacity { get; set; } = 32;
+    public int SynthesizedCacheByteCapacity { get; set; } = 16 * 1024 * 1024;
     public System.ComponentModel.DataAnnotations.RangeAttribute Frequency { get; set; } = new(37, 32767);
     public System.ComponentModel.DataAnnotations.RangeAttribute DurationMilliseconds { get; set; } = new(1d, int.MaxValue);
     public System.ComponentModel.DataAnnotations.RangeAttribute PauseMilliseconds { get; set; } = new(0d, int.MaxValue);
