@@ -45,7 +45,7 @@ Lifetime begins from confirmed display rather than send time or queue reservatio
 
 External actions first commit their attempt, then execute once outside the lock, then commit their outcome. Do not add automatic `Process.Start` retries: after a crash between the side effect and recorded outcome, repeating the command could duplicate work. Recovery records interruption instead. A failed pre-action journal write must prevent the external effect.
 
-The hub owns the broker/scheduler cancellation token and supervised background work. Add sound, callbacks, or other background effects through that lifetime owner and await its shutdown. UI event handlers use the existing operation boundary; lower operations propagate a real error for the boundary to handle. Test and development tools consume these contracts without reshaping lower production layers to suit a test.
+The hub owns the broker/scheduler cancellation token and supervised background work. Add sound, callbacks, or other background effects through that lifetime owner and await its shutdown. `CodexResultNotifier.SendAsync` launches the native Codex queue process directly; `NotificationHub.PublishLlmResults` owns persisted attempt state, startup recovery and host shutdown. Keep this delivery independent of CLI `Wait` and renderer interaction choices. See [Codex result delivery](Integration.md#notify-a-codex-conversation) for the public contract and replay boundary. UI event handlers use the existing operation boundary; lower operations propagate a real error for the boundary to handle. Test and development tools consume these contracts without reshaping lower production layers to suit a test.
 
 ## Build, verify, and document a change
 

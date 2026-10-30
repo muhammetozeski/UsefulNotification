@@ -178,6 +178,8 @@ public sealed record NotificationRequest
     [JsonIgnore(Condition = JsonIgnoreCondition.Never)] public Dictionary<string, string> Data { get; set; } = [];
     /// <summary>Optional existing named pipe receiving one JSON result after completion is persisted. The host makes a bounded best-effort connection.</summary>
     public string? CallbackPipe { get; set; }
+    /// <summary>Optional Codex conversation receiving each persisted completion result. Independent of expiry, interaction and caller-side waiting.</summary>
+    public CodexThreadTarget? NotifyLLM { get; set; }
     [JsonIgnore] internal NotificationKind Kind => Template is not null ? NotificationKind.Custom : Progress is not null ? NotificationKind.Progress : Image is not null ? NotificationKind.Image : Input is not null ? NotificationKind.Input : Checklist.Count > 0 ? NotificationKind.Checklist : Actions.Count > 0 ? NotificationKind.Choice : Schedule is not null ? NotificationKind.Reminder : NotificationKind.Text;
 }
 /// <summary>Owns expiry independently of scheduling.</summary>
@@ -343,6 +345,8 @@ public sealed record NotificationUpdate
     public Change<Dictionary<string, string>>? Data { get; set; }
     /// <summary>Absent preserves the result destination; Change with null disables callbacks for later completions.</summary>
     public Change<string?>? CallbackPipe { get; set; }
+    /// <summary>Absent preserves the Codex destination; an explicit null disables notification for later completions.</summary>
+    public Change<CodexThreadTarget?>? NotifyLLM { get; set; }
 }
 /// <summary>Owns a series and its bounded display history.</summary>
 public sealed record NotificationEntry
@@ -385,6 +389,8 @@ public sealed record NotificationAcceptance(Guid RequestId, Guid OccurrenceId);
 /// <summary>Owns the evidence and result of one display.</summary>
 public sealed record NotificationOccurrence
 {
+    /// <summary>Host-owned delivery attempt for this occurrence's result; retained independently of later request changes.</summary>
+    public LlmResultDelivery? LlmDelivery { get; set; }
     /// <summary>Accepted appearance and delivery snapshot for this display, retained when a later occurrence changes its theme.</summary>
     public ResolvedNotification? Resolved { get; set; }
     /// <summary>Identity of this display attempt; snooze, recurrence and retry create another occurrence.</summary>

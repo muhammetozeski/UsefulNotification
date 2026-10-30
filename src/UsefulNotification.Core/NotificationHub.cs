@@ -15,6 +15,7 @@ internal sealed class NotificationHub : IAsyncDisposable
     readonly HashSet<Guid> Hovered = [];
     readonly CancellationTokenSource Stopping = new();
     readonly List<Task> Tasks = [];
+    readonly HashSet<Guid> LlmInFlight = [];
     string Committed;
     List<NotificationEntry> Published;
     bool Started;
@@ -83,6 +84,7 @@ internal sealed class NotificationHub : IAsyncDisposable
     {
         lock (Gate) { if (Started) return; Started = true; }
         RunBackground(ListenAsync);
+        PublishLlmResults();
         RunBackground(async token =>
         {
             using var timer = new PeriodicTimer(AppConstants.Notifications.SchedulerInterval);
@@ -362,6 +364,7 @@ internal sealed class NotificationHub : IAsyncDisposable
             nextDue = recurrence.Next(entry.SeriesAnchor, DateTimeOffset.Now);
         var result = new NotificationResult { Id = entry.Id, OccurrenceId = occurrence.Id, Status = status, ActionId = actionId, Reply = reply, CheckedItems = checkedItems ?? [], Action = action };
         occurrence.Result = result; occurrence.Status = status; occurrence.Action = action; occurrence.PendingResult = null;
+        occurrence.LlmDelivery = entry.Request.NotifyLLM is { } target ? new(NotificationProtocol.Copy(target)) : null;
         occurrence.ClosedAt = result.At; occurrence.ExpiresAt = null; occurrence.PausedAt = null; Hovered.Remove(entry.Id);
         if (nextDue is { } due) entry.Occurrences.Add(new() { Status = status == NotificationStatus.Snoozed ? NotificationStatus.Snoozed : NotificationStatus.Scheduled, DueAt = due, Resolved = NotificationProtocol.Copy(entry.Request.Resolved) });
         return result;
@@ -399,6 +402,7 @@ internal sealed class NotificationHub : IAsyncDisposable
             Input = change.Input is { } input ? input.Value : old.Input, Checklist = change.Checklist is { } checklist ? checklist.Value : old.Checklist,
             Template = change.Template is { } template ? template.Value : old.Template, Data = change.Data is { } data ? data.Value : old.Data,
             CallbackPipe = change.CallbackPipe is { } callback ? callback.Value : old.CallbackPipe,
+            NotifyLLM = change.NotifyLLM is { } llm ? llm.Value : old.NotifyLLM,
             Progress = change.ProgressContent is { } content ? content.Value : old.Progress,
             Overrides = change.Overrides is { } overrides ? overrides.Value is null ? null : MergeOverrides(old.Overrides, overrides.Value) : old.Overrides,
             Interaction = change.Interaction is { } interaction ? interaction.Value : old.Interaction,
@@ -444,6 +448,7 @@ internal sealed class NotificationHub : IAsyncDisposable
 
     static void Validate(NotificationRequest request, bool validateFiles = true)
     {
+        if (request.NotifyLLM?.ThreadId == Guid.Empty) throw new ArgumentException("A nonempty Codex thread identity is required.");
         if (request.Actions is null || request.Checklist is null || request.Data is null) throw new ArgumentException("Actions, checklist and data collections cannot be null.");
         if (request.Actions.Any(action => action is null || string.IsNullOrWhiteSpace(action.Id))) throw new ArgumentException("Actions must have usable identities.");
         if (request.Checklist.Any(item => item is null || string.IsNullOrWhiteSpace(item.Id)) || request.Checklist.Select(item => item.Id).Distinct().Count() != request.Checklist.Count) throw new ArgumentException("Checklist items must have unique usable identities.");
@@ -520,6 +525,7 @@ internal sealed class NotificationHub : IAsyncDisposable
     static NotificationReceipt Receipt(NotificationEntry entry, Guid? occurrence = null) => new() { Accepted = true, Id = entry.Id, OccurrenceId = occurrence ?? entry.Current.Id };
     void PublishResult(string? pipeName, NotificationResult result)
     {
+        PublishLlmResults(result);
         if (string.IsNullOrWhiteSpace(pipeName)) return;
         string payload = JsonSerializer.Serialize(result, AppConstants.WireJson);
         RunBackground(async token =>
@@ -529,6 +535,52 @@ internal sealed class NotificationHub : IAsyncDisposable
             await pipe.ConnectAsync(AppConstants.Transport.ConnectTimeout, budget.Token);
             await NotificationProtocol.WriteLineAsync(pipe, payload, budget.Token);
         });
+    }
+    /// <summary>Starts pending result messages after their journal commit, independently of caller waiting and existing pipe callbacks.</summary>
+    /// <param name="result">Optional just-completed display; null recovers all not-yet-started deliveries at host startup.</param>
+    void PublishLlmResults(NotificationResult? result = null)
+    {
+        lock (Gate)
+        {
+            foreach (var occurrence in Entries.Where(entry => result is null || entry.Id == result.Id).SelectMany(entry => entry.Occurrences)
+                .Where(item => item.Result is not null && item.LlmDelivery is { AttemptedAt: null } && (result is null || item.Id == result.OccurrenceId)))
+            {
+                if (!LlmInFlight.Add(occurrence.Id)) continue;
+                Guid occurrenceId = occurrence.Id;
+                RunBackground(async token =>
+                {
+                    NotificationResult completion; CodexThreadTarget target;
+                    try
+                    {
+                        lock (Gate)
+                        {
+                            var display = Entries.SelectMany(entry => entry.Occurrences).FirstOrDefault(item => item.Id == occurrenceId);
+                            if (display?.Result is null || display.LlmDelivery is not { AttemptedAt: null } delivery) return;
+                            completion = NotificationProtocol.Copy(display.Result); target = delivery.Target;
+                            delivery.AttemptedAt = DateTimeOffset.Now;
+                            Persist();
+                        }
+                        await CodexResultNotifier.SendAsync(target, completion, token);
+                        lock (Gate)
+                        {
+                            var delivery = Entries.SelectMany(entry => entry.Occurrences).FirstOrDefault(item => item.Id == occurrenceId)?.LlmDelivery;
+                            if (delivery is not null) { delivery.QueuedAt = DateTimeOffset.Now; Persist(); }
+                        }
+                    }
+                    catch (Exception error)
+                    {
+                        Log($"Codex result delivery failed; occurrence={occurrenceId}; error={error}", PrintToConsole: false, isRun: IsLogEnabled);
+                        lock (Gate)
+                        {
+                            var delivery = Entries.SelectMany(entry => entry.Occurrences).FirstOrDefault(item => item.Id == occurrenceId)?.LlmDelivery;
+                            if (delivery is not null) { delivery.Error = error.ToString(); Persist(); }
+                        }
+                        throw;
+                    }
+                    finally { lock (Gate) LlmInFlight.Remove(occurrenceId); }
+                });
+            }
+        }
     }
     public async Task ListenAsync(CancellationToken cancellationToken)
     {

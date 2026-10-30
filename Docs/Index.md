@@ -1,6 +1,6 @@
 # Documentation
 
-- [Integration](Integration.md): install the shared local NuGet feed, discover the portable host, send notifications from programs and scripts, update them, and receive results.
+- [Integration](Integration.md): install the shared local NuGet feed, discover the portable host, send notifications from programs and scripts, update them, receive results, and notify an existing Codex conversation.
 - [HTML and themes](Appearance.md): select complete inheritable themes, override individual fields, or replace the complete HTML card.
 - [Source development](Development.md): follow a request through persistence, rendering, interaction, and results; choose the owner of a source change.
 - [Building and packaging](Build.md): reproduce the Windows payload, portable launcher, and offline caller SDK in an external disposable output folder.

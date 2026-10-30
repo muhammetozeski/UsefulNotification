@@ -18,6 +18,7 @@ internal static class AppConstants
     public static HtmlTemplateOptions HtmlTemplates = new();
     public static ActionPolicy Actions = new();
     public static AudioPolicy Audio = new();
+    public static CodexMessagingOptions CodexMessaging = new();
     public static JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true, AllowOutOfOrderMetadataProperties = true, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull, Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase), new NotificationThemeConverter(), new FileInfoConverter(), new ColorConverter(), new ProcessStartConverter(), new ChangeConverterFactory() } };
     public static JsonSerializerOptions WireJson = new(Json) { WriteIndented = false };
     static readonly Lazy<JsonSerializerOptions> StoredJson = new(() => CreateStorageJson(new DirectoryInfo(AppPaths.Root)));

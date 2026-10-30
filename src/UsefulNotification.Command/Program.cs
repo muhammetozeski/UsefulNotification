@@ -10,7 +10,7 @@ return await CommandLine.ExecuteAsync(args);
 internal static class CommandLine
 {
     /// <summary>Identifies an argument's field or command behavior at the text boundary.</summary>
-    enum Field { Title, Message, Source, Level, Kind, Priority, Theme, Sticky, Silent, Duration, ClickToAcknowledge, At, After, Every, Recurrence, Id, Tag, Group, Progress, Image, Template, Input, Items, Actions, Sound, Json, Stdin, Wait, Help, Panel, List, Get, Clear, Update, Dismiss, Snooze, Settings, Exit }
+    enum Field { Title, Message, Source, Level, Kind, Priority, Theme, Sticky, Silent, Duration, BodyClick, NotifyLLM, At, After, Every, Recurrence, Id, Tag, Group, Progress, Image, Template, Input, Items, Actions, Sound, Json, Stdin, Wait, Help, Panel, List, Get, Clear, Update, Dismiss, Snooze, Settings, Exit }
     /// <summary>Describes a public token and whether it consumes the next argument.</summary>
     /// <param name="Name">The accepted command or option spelling.</param>
     /// <param name="Field">The field or behavior selected by this token.</param>
@@ -18,15 +18,16 @@ internal static class CommandLine
     record Option(string Name, Field Field, bool Value = false);
     static List<Option> Options =
     [
-        new("--title", Field.Title, true), new("--message", Field.Message, true), new("--source", Field.Source, true),
-        new("--level", Field.Level, true), new("--type", Field.Kind, true), new("--priority", Field.Priority, true), new("--theme", Field.Theme, true),
-        new("--sticky", Field.Sticky), new("--silent", Field.Silent), new("--duration", Field.Duration, true), new("--acknowledge-on-click", Field.ClickToAcknowledge), new("--at", Field.At, true),
-        new("--after", Field.After, true), new("--every", Field.Every, true), new("--repeat", Field.Recurrence, true), new("--id", Field.Id, true),
-        new("--tag", Field.Tag, true), new("--group", Field.Group, true), new("--progress", Field.Progress, true), new("--image", Field.Image, true),
-        new("--template", Field.Template, true), new("--input", Field.Input), new("--items", Field.Items, true), new("--actions", Field.Actions, true),
-        new("--sound", Field.Sound, true), new("--json", Field.Json, true), new("--stdin", Field.Stdin), new("--wait", Field.Wait), new("--help", Field.Help),
-        new("panel", Field.Panel), new("list", Field.List), new("get", Field.Get), new("clear", Field.Clear), new("update", Field.Update),
-        new("dismiss", Field.Dismiss), new("snooze", Field.Snooze), new("settings", Field.Settings), new("exit", Field.Exit)
+        new("--Title", Field.Title, true), new("--Message", Field.Message, true), new("--Source", Field.Source, true),
+        new("--Level", Field.Level, true), new("--Type", Field.Kind, true), new("--Priority", Field.Priority, true), new("--Theme", Field.Theme, true),
+        new("--Sticky", Field.Sticky), new("--Silent", Field.Silent), new("--Duration", Field.Duration, true), new("--BodyClick", Field.BodyClick), new("--At", Field.At, true),
+        new("--NotifyLLM", Field.NotifyLLM, true), new("-l", Field.NotifyLLM, true),
+        new("--After", Field.After, true), new("--Every", Field.Every, true), new("--Repeat", Field.Recurrence, true), new("--Id", Field.Id, true),
+        new("--Tag", Field.Tag, true), new("--Group", Field.Group, true), new("--Progress", Field.Progress, true), new("--Image", Field.Image, true),
+        new("--Template", Field.Template, true), new("--Input", Field.Input), new("--Items", Field.Items, true), new("--Actions", Field.Actions, true),
+        new("--Sound", Field.Sound, true), new("--Json", Field.Json, true), new("--Stdin", Field.Stdin), new("--Wait", Field.Wait), new("--Help", Field.Help),
+        new("Panel", Field.Panel), new("List", Field.List), new("Get", Field.Get), new("Clear", Field.Clear), new("Update", Field.Update),
+        new("Dismiss", Field.Dismiss), new("Snooze", Field.Snooze), new("Settings", Field.Settings), new("Exit", Field.Exit)
     ];
 
     /// <summary>Sends an empty notification, a complete request or a partial update, and optionally waits for its exact display result.</summary>
@@ -46,9 +47,11 @@ internal static class CommandLine
             List<string> positional = [];
             TimeSpan? delay = null;
             Guid? selectedId = null;
+            CodexThreadTarget? llmTarget = null;
             for (int index = 0; index < arguments.Length; index++)
             {
-                Option? option = Options.FirstOrDefault(candidate => candidate.Name.Equals(arguments[index], StringComparison.OrdinalIgnoreCase));
+                string token = arguments[index].Equals("--acknowledge-on-click", StringComparison.OrdinalIgnoreCase) ? "--BodyClick" : arguments[index];
+                Option? option = Options.FirstOrDefault(candidate => candidate.Name.Equals(token, StringComparison.OrdinalIgnoreCase));
                 if (option is null)
                 {
                     if (arguments[index].StartsWith('-')) throw new ArgumentException(string.Format(CultureInfo.CurrentCulture, Strings.UnknownOption, arguments[index]));
@@ -61,8 +64,8 @@ internal static class CommandLine
                     switch (option.Field)
                     {
                         case Field.Help:
-                            Console.WriteLine($"{Strings.CommandUsage}\n{Strings.CommandEmpty}\n{Strings.CommandDuration}");
-                            foreach (Option documented in Options) Console.WriteLine($"  {documented.Name}{(documented.Value ? $" <{Strings.CommandValue}>" : string.Empty)}");
+                            Console.WriteLine($"{Strings.CommandUsage}\n{Strings.CommandEmpty}\n{Strings.CommandDuration}\n{Strings.CommandNotifyLlm}");
+                            foreach (Option documented in Options) Console.WriteLine($"  {documented.Name}{(documented.Field == Field.NotifyLLM ? " <ThreadId> Codex" : documented.Value ? $" <{Strings.CommandValue}>" : string.Empty)}");
                             return 0;
                         case Field.Title: request["title"] = value; break;
                         case Field.Message: request["message"] = value; break;
@@ -74,7 +77,12 @@ internal static class CommandLine
                         case Field.Sticky: Content("overrides")["lifetime"] = new JsonObject { ["mode"] = "acknowledge" }; break;
                         case Field.Silent: Content("overrides")["sound"] = null; break;
                         case Field.Duration: Content("overrides")["lifetime"] = new JsonObject { ["mode"] = "expire", ["duration"] = ParseDuration(value).ToString() }; break;
-                        case Field.ClickToAcknowledge: Content("interaction")["clickToAcknowledge"] = true; Content("interaction")["showSnooze"] = true; break;
+                        case Field.BodyClick: Content("interaction")["clickToAcknowledge"] = true; Content("interaction")["showSnooze"] = true; break;
+                        case Field.NotifyLLM:
+                            llmTarget = new(Guid.Parse(value));
+                            if (++index >= arguments.Length || !arguments[index].Equals(AppConstants.CodexMessaging.Provider, StringComparison.OrdinalIgnoreCase))
+                                throw new ArgumentException(Strings.CommandNotifyLlm);
+                            break;
                         case Field.At: Content("schedule")["at"] = JsonValue.Create(DateTimeOffset.Parse(value, CultureInfo.CurrentCulture)); break;
                         case Field.After: delay = ParseDuration(value); Content("schedule")["after"] = delay.Value.ToString(); break;
                         case Field.Every:
@@ -118,8 +126,9 @@ internal static class CommandLine
             if (positional.Count > 2) throw new ArgumentException(Strings.PositionalLimit);
             if (positional.Count > 0) request["title"] = positional[0];
             if (positional.Count > 1) request["message"] = positional[1];
+            if (llmTarget is not null) request["notifyLLM"] = JsonSerializer.SerializeToNode(llmTarget, AppConstants.Json);
             Guid? id = selectedId ?? request["id"]?.Deserialize<Guid>(AppConstants.Json);
-            if (operation is NotificationOperation.Update or NotificationOperation.Dismiss or NotificationOperation.Snooze or NotificationOperation.Get && id is null) throw new ArgumentException(string.Format(CultureInfo.CurrentCulture, Strings.MissingValue, "--id"));
+            if (operation is NotificationOperation.Update or NotificationOperation.Dismiss or NotificationOperation.Snooze or NotificationOperation.Get && id is null) throw new ArgumentException(string.Format(CultureInfo.CurrentCulture, Strings.MissingValue, "--Id"));
             if (settingsMenu) SettingsManager.OpenSettingsMenu(AppConstants.ConfigFileName);
             if (operation == NotificationOperation.Send)
             {

@@ -7,6 +7,7 @@ internal static class Strings {
     public static string CommandUsage = "notify.exe [başlık] [mesaj] [seçenekler]";
     public static string CommandEmpty = "Parametresiz çağrı bilgi bildirimi gönderir.";
     public static string CommandDuration = "Süreler saniye sayısı veya .NET TimeSpan biçiminde yazılır.";
+    public static string CommandNotifyLlm = "--NotifyLLM <ThreadId> Codex veya -l <ThreadId> Codex: kapanma sonucunu sohbete iletir; bekleme ve gösterim seçeneklerinden bağımsızdır.";
     public static string CommandValue = "değer";
     public static string UnknownOption = "Bilinmeyen seçenek: {0}";
     public static string MissingValue = "Değer eksik: {0}";

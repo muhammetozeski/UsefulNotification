@@ -73,10 +73,10 @@ Place a theme JSON document under `UserData\Themes` in the portable application 
 Colors accept HTML color names or `#RRGGBB`; serialized colors use `#RRGGBBAA`, with alpha last. Select a loaded theme at the text boundary:
 
 ```powershell
-.\notify.exe "Workshop" "The report is ready." --theme Workshop
+.\notify.exe "Workshop" "The report is ready." --Theme Workshop
 ```
 
-CLI and JSON theme names are resolved case-insensitively by the host. `--theme` selects appearance, sound and delivery together. `--silent`, `--sound`, `--duration`, `--sticky` and `--priority` add explicit per-send overrides. `--acknowledge-on-click` enables background-click acknowledgement while preserving Snooze. C# callers pass actual theme and interaction objects.
+CLI and JSON theme names are resolved case-insensitively by the host. `--Theme` selects appearance, sound and delivery together. `--Silent`, `--Sound`, `--Duration`, `--Sticky` and `--Priority` add explicit per-send overrides. `--BodyClick` enables background-click acknowledgement while preserving Snooze. C# callers pass actual theme and interaction objects.
 ## Replace the complete card with HTML
 
 The host creates its editable default `UserData\Templates\Card.html` on first launch and preserves existing user files. Use the default or a specific HTML file:
@@ -100,8 +100,8 @@ await NotificationClient.SendAsync(new()
 Equivalent script calls:
 
 ```powershell
-.\notify.exe "Deployment complete" "The service is available." --type Custom
-.\notify.exe "Report ready" "The report is available." --template "C:\MyProgram\Notifications\report.html"
+.\notify.exe "Deployment complete" "The service is available." --Type Custom
+.\notify.exe "Report ready" "The report is available." --Template "C:\MyProgram\Notifications\report.html"
 ```
 
 HTML supplies the entire card, including its frame and controls. The active template runs in a sandboxed iframe with scripts enabled. Completed history previews disable scripts. The parent measures the frame and resizes the stack when content changes.

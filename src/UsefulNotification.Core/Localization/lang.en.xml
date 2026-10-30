@@ -120,6 +120,7 @@
   <s name="CommandUsage">notify.exe [title] [message] [options]</s>
   <s name="CommandEmpty">No arguments sends an information notification.</s>
   <s name="CommandDuration">Durations accept a number of seconds or .NET TimeSpan format.</s>
+  <s name="CommandNotifyLlm">--NotifyLLM &lt;ThreadId&gt; Codex or -l &lt;ThreadId&gt; Codex: sends the completion result to the conversation, independently of waiting and display options.</s>
   <s name="CommandValue">value</s>
   <s name="UnknownOption">Unknown option: {0}</s>
   <s name="MissingValue">Missing value: {0}</s>

@@ -18,12 +18,12 @@ From a terminal in the extracted program folder:
 
 ```powershell
 .\notify.exe
-.\notify.exe "Backup complete" "All files were copied." --theme Success
+.\notify.exe "Backup complete" "All files were copied." --Theme Success
 ```
 
 The first command needs no arguments. The broker supplies useful content, the sender and timestamp. Select Base, Daily, Success, Attention, Urgent or Reminder to choose colors, sound and delivery together. Programs can also use the C# interface or the local named-pipe protocol.
 
-For a .NET 10 x64 Windows caller, install the matching software development kit (SDK) as a shared local NuGet feed, then add `UsefulNotification.Core` version `3.0.0` to each caller project. The SDK contains the exact dependency packages and IntelliSense documentation. After the host's first launch, callers in other folders can send with the default client options:
+For a .NET 10 x64 Windows caller, install the matching software development kit (SDK) as a shared local NuGet feed, then add `UsefulNotification.Core` version `3.1.0` to each caller project. The SDK contains the exact dependency packages and IntelliSense documentation. After the host's first launch, callers in other folders can send with the default client options:
 
 ```csharp
 using UsefulNotification;
@@ -43,6 +43,7 @@ The [integration guide](Docs/Integration.md) provides SDK installation and packa
 - Complete inheritable C# themes for colors, sound and delivery, with optional per-send field overrides.
 - Text, reminders, progress, images, choices, replies, checklists, and complete custom HTML cards.
 - Live updates, priority queues, acknowledgement results, snooze, and recurring schedules.
+- Optional completion messages to existing Codex conversations through `--NotifyLLM` or `-l`, independently of caller waiting.
 - Built-in paired light/dark palettes, editable themes and templates, soft synthesized sounds and local audio files.
 - Searchable history, tray access, global panel shortcut, and Turkish/English interface resources.
 - Portable settings and data, atomic journal commits with backups, and confirmed on-screen delivery.

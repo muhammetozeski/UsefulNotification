@@ -8,17 +8,46 @@ From the extracted application folder:
 
 ```powershell
 .\notify.exe
-.\notify.exe "Backup complete" "All files were copied." --theme Success
-.\notify.exe "Backup failed" "The destination is unavailable." --theme Urgent --sticky
+.\notify.exe "Backup complete" "All files were copied." --Theme Success
+.\notify.exe "Backup failed" "The destination is unavailable." --Theme Urgent --Sticky
 ```
 
-The empty command supplies the calling program's name, title, message and current timestamp. The timestamp format is `yyyy.MM.dd HH.mm.ss`. The selected theme supplies colors, sound and delivery together. `--silent` writes an explicit null sound override for one request; `--acknowledge-on-click` enables card-background acknowledgement while retaining Snooze. Input controls and action buttons keep their own interactions.
+The empty command supplies the calling program's name, title, message and current timestamp. The timestamp format is `yyyy.MM.dd HH.mm.ss`. The selected theme supplies colors, sound and delivery together. `--Silent` writes an explicit null sound override for one request; `--BodyClick` enables card-background acknowledgement while retaining Snooze. Input controls and action buttons keep their own interactions.
 
-Command durations are seconds or .NET durations such as `00:05:00`. `notify.exe --help` describes the complete syntax in the selected interface language.
+Command durations are seconds or .NET durations such as `00:05:00`. `notify.exe --Help` describes the complete syntax in the selected interface language.
+
+## Notify a Codex conversation
+
+Use a version 3.1.0 or later desktop host and command sender. Add the conversation UUID and provider to either equivalent option:
+
+```powershell
+.\notify.exe "Question" "Please review the result." --NotifyLLM "c2206d17-d20f-4f53-a387-fd841385f0e6" Codex
+.\notify.exe "Question" "Please review the result." -l "c2206d17-d20f-4f53-a387-fd841385f0e6" Codex
+```
+
+Replace the UUID with the existing destination conversation. The sender prints acceptance and exits normally. The resident host sends the completed occurrence's JSON result to that conversation through Codex's native `queue --thread <ThreadId> --message <Text>` command. It discovers the newest installed Codex executable under the current account's local `OpenAI\Codex\bin` directory, with PATH as the fallback. It launches the executable directly with separate arguments; no PowerShell helper, terminal window or Codex polling loop is involved.
+
+Delivery follows the completion result: body click, close control, selected action, submitted reply, checked items, snooze, expiry or delivery failure. The message includes `id`, `occurrenceId`, `status`, `at` and any action/reply/checklist result. Every recurring or snoozed display retains its own result identity. Ordinary notifications omit `NotifyLLM` and produce no conversation message.
+
+`--Wait` independently keeps the sender open until its accepted display completes. `--Sticky` independently keeps the card until interaction. `--BodyClick` independently lets the card background acknowledge the notification and retains Snooze. None is required for `--NotifyLLM`; they can be combined as needed. Long option names use PascalCase and are accepted case-insensitively; `-l` is the short alias. The old `--acknowledge-on-click` spelling remains accepted for existing scripts, while help and examples use `--BodyClick`.
+
+C# callers pass the actual destination object:
+
+```csharp
+await NotificationClient.SendAsync(new()
+{
+    Title = "Review complete",
+    NotifyLLM = new CodexThreadTarget(conversationId)
+});
+```
+
+`conversationId` is the destination conversation's `Guid`. JSON callers supply `"notifyLLM": { "threadId": "c2206d17-d20f-4f53-a387-fd841385f0e6" }`. Partial updates retain an omitted destination; `"notifyLLM": null` disables it for later completions. CLI destination options are applied after JSON loading, so `--Json` or `--Stdin` cannot accidentally discard the supplied conversation.
+
+The host journals completion before starting delivery. Each occurrence's `llmDelivery` records the captured destination, `attemptedAt`, confirmed `queuedAt`, or a technical `error`. Queue acceptance means Codex accepted the message, rather than a claim that the model has already answered. Not-yet-started deliveries are recovered at host startup. A started attempt is not automatically repeated after a process error or uncertain shutdown, avoiding duplicate conversation prompts. Its original notification result remains in history. Existing named-pipe callbacks continue independently.
 
 ## Call from C#
 
-Use the version `3.0.0` software development kit (SDK) with a Windows .NET 10 x64 caller. Keep the SDK in a permanent folder, separate from the application and caller projects. This installation uses `C:\E\kp\aaBenimProgramlarim\NugetPaketleri\UsefulNotification`; `Install.ps1` must remain beside its `Packages` folder.
+Use the version `3.1.0` software development kit (SDK) with a Windows .NET 10 x64 caller. Keep the SDK in a permanent folder, separate from the application and caller projects. This installation uses `C:\E\kp\aaBenimProgramlarim\NugetPaketleri\UsefulNotification`; `Install.ps1` must remain beside its `Packages` folder.
 
 Run the installer once for the Windows account:
 
@@ -28,11 +57,11 @@ pwsh -NoProfile -File "C:\E\kp\aaBenimProgramlarim\NugetPaketleri\UsefulNotifica
 
 It registers or repairs the `UsefulNotification` package source in the user's NuGet configuration. The source points to the adjacent `Packages` folder, shared by all that user's projects. The installer discovers NuGet's actual configured global package cache, checks the exact package versions and extracted contents, and restores incomplete or missing packages offline from the SDK. Complete cached packages skip restoration. It always runs without questions and writes detailed progress to the console; it does not configure application startup.
 
-The SDK carries `UsefulNotification.Core.3.0.0.nupkg` and its exact dependency `polly.core.8.7.0.nupkg`. The Core package includes its generated XML descriptions for IntelliSense. Each caller needs only a package reference; normal project restore finds the registered user-level feed:
+The SDK carries `UsefulNotification.Core.3.1.0.nupkg` and its exact dependency `polly.core.8.7.0.nupkg`. The Core package includes its generated XML descriptions for IntelliSense. Each caller needs only a package reference; normal project restore finds the registered user-level feed:
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="UsefulNotification.Core" Version="3.0.0" />
+  <PackageReference Include="UsefulNotification.Core" Version="3.1.0" />
 </ItemGroup>
 ```
 
@@ -105,8 +134,8 @@ await NotificationClient.SendAsync(new()
 `ThemeResolver.Resolve(request)` returns detached effective values, including `Theme`, `Sound`, `Lifetime`, `Priority`, `Interaction` and `FieldOrigins`. Accepted entries carry their resolved snapshot, so later preset or catalog edits do not alter an already accepted notification. The appearance guide describes parent themes and file-backed definitions.
 
 ```powershell
-.\notify.exe "Build complete" "Review the output." --theme Success
-.\notify.exe "Read this" "Click the card or postpone it." --theme Reminder --acknowledge-on-click --silent
+.\notify.exe "Build complete" "Review the output." --Theme Success
+.\notify.exe "Read this" "Click the card or postpone it." --Theme Reminder --BodyClick --Silent
 ```
 ## Receive a user's decision
 
@@ -184,10 +213,10 @@ await NotificationClient.ExecuteAsync(new()
 Supplying `OccurrenceId` guards an update, dismissal, or snooze against acting on a newer display. Commands also include Get, List, Retry, Delete, Move, Clear, ShowPanel, ReloadSettings, and Shutdown. Clear removes completed series while retaining active and future work. Repeating a Send ID acknowledges the existing send; a source/tag pair can update the corresponding card.
 
 ```powershell
-.\notify.exe update --id "c2206d17-d20f-4f53-a387-fd841385f0e6" --progress 80
-.\notify.exe get --id "c2206d17-d20f-4f53-a387-fd841385f0e6"
-.\notify.exe snooze --id "c2206d17-d20f-4f53-a387-fd841385f0e6" --after 300
-.\notify.exe dismiss --id "c2206d17-d20f-4f53-a387-fd841385f0e6"
+.\notify.exe Update --Id "c2206d17-d20f-4f53-a387-fd841385f0e6" --Progress 80
+.\notify.exe Get --Id "c2206d17-d20f-4f53-a387-fd841385f0e6"
+.\notify.exe Snooze --Id "c2206d17-d20f-4f53-a387-fd841385f0e6" --After 300
+.\notify.exe Dismiss --Id "c2206d17-d20f-4f53-a387-fd841385f0e6"
 .\notify.exe list
 .\notify.exe panel
 .\notify.exe clear
@@ -234,8 +263,8 @@ Use either `At` or `After`. `IntervalRecurrence`, `DailyRecurrence`, `WeeklyRecu
 The command accepts a request object from a file or standard input:
 
 ```powershell
-.\notify.exe --json "C:\Notifications\download.json"
-'{"title":"Worker","message":"Job completed","silent":true}' | .\notify.exe --stdin
+.\notify.exe --Json "C:\Notifications\download.json"
+'{"title":"Worker","message":"Job completed","silent":true}' | .\notify.exe --Stdin
 ```
 
 Version 3 object shapes:
@@ -271,9 +300,9 @@ Partial updates use field presence directly:
 {"operation":"update","id":"c2206d17-d20f-4f53-a387-fd841385f0e6","update":{"progress":{"value":80},"actions":[],"schedule":null}}
 ```
 
-Use `notify.exe update --id <id> --json <file>` or `--stdin` for a patch. An omitted field is retained; `null` explicitly clears a nullable field. `--actions ""` and `--items ""` empty their lists. `--progress` updates only Value.
+Use `notify.exe Update --Id <id> --Json <file>` or `--Stdin` for a patch. An omitted field is retained; `null` explicitly clears a nullable field. `--Actions ""` and `--Items ""` empty their lists. `--Progress` updates only Value.
 
-For pipe polling, send Get and inspect the matching occurrence's `result` in `entries[].occurrences`. For a push result, the caller first creates its own named-pipe server and sets `callbackPipe` in the request. The host sends the same stored result as one BOM-free UTF-8 JSON line. Callback delivery is best effort; the journal retains the result if the recipient is unavailable. `notify.exe --wait` waits for the accepted occurrence.
+For pipe polling, send Get and inspect the matching occurrence's `result` in `entries[].occurrences`. For a push result, the caller first creates its own named-pipe server and sets `callbackPipe` in the request. The host sends the same stored result as one BOM-free UTF-8 JSON line. Callback delivery is best effort; the journal retains the result if the recipient is unavailable. `notify.exe --Wait` waits for the accepted occurrence.
 
 ## Scoped history removal
 

@@ -12,7 +12,7 @@ using System.Windows.Forms;
 using UsefulNotification;
 
 [assembly: AssemblyTitle("UsefulNotification Demo")]
-[assembly: AssemblyVersion("3.0.0.0")]
+[assembly: AssemblyVersion("3.1.0.0")]
 
 /// <summary>Starts an external consumer of the public SDK; the broker source and state models are not modified.</summary>
 internal static class DemoProgram
@@ -421,7 +421,7 @@ internal sealed class NotificationPicker : Form
             $" · {T("Süre", "Lifetime")}: {lifetime} ({resolved.FieldOrigins.GetValueOrDefault(nameof(ResolvedNotification.Lifetime), resolved.Theme.Name)})" + Environment.NewLine +
             $"{T("Öncelik", "Priority")}: {resolved.Priority} · {interaction}" +
             (resolved.Interaction.ShowSnooze ? T(" · Erteleme açık", " · Snooze available") : string.Empty);
-        Preview.Text = "\"" + CommandPath + "\" --stdin" + Environment.NewLine + WireRequest(request);
+        Preview.Text = "\"" + CommandPath + "\" --Stdin" + Environment.NewLine + WireRequest(request);
     }
 
     /// <summary>Projects the composer's supported values to JSON at the command text boundary.</summary>
@@ -466,9 +466,9 @@ internal sealed class NotificationPicker : Form
         {
             if (!File.Exists(CommandPath)) throw new FileNotFoundException("notify.exe was not found beside the selected host.", CommandPath);
             string request = WireRequest(Request());
-            Preview.Text = "\"" + CommandPath + "\" --stdin" + Environment.NewLine + request;
+            Preview.Text = "\"" + CommandPath + "\" --Stdin" + Environment.NewLine + request;
             var start = new ProcessStartInfo(CommandPath) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true };
-            start.ArgumentList.Add("--stdin");
+            start.ArgumentList.Add("--Stdin");
             using var process = Process.Start(start) ?? throw new IOException("The notification sender did not start.");
             Task<string> output = process.StandardOutput.ReadToEndAsync(), error = process.StandardError.ReadToEndAsync();
             await process.StandardInput.WriteAsync(request); process.StandardInput.Close();
